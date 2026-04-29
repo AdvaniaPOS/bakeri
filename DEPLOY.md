@@ -98,7 +98,7 @@ Lag fil `/etc/nginx/sites-available/bakeri`:
 server {
     listen 80;
     listen [::]:80;
-    server_name bakeri.dittdomene.no;   # endre til faktisk domene
+    server_name bakeri.poshub.no;
 
     root /home/poshubadmin/bakeri/frontend/dist;
     index index.html;
@@ -142,12 +142,13 @@ sudo systemctl reload nginx
 
 ## 4. Cloudflare Tunnel
 
-Legg til ny rute i `cloudflared` config (samme som Link):
-```yaml
-- hostname: bakeri.dittdomene.no
-  service: http://127.0.0.1:80
-```
-…og restart `cloudflared`.
+Legg til ny Published application-rute i Cloudflare Zero Trust:
+
+| Destination | Type | Service |
+|-------------|------|---------|
+| `bakeri.poshub.no` | Published application | `http://localhost:80` |
+
+Dette matcher samme mønster som `tagly.poshub.no`. Nginx ruter videre basert på `server_name`.
 
 ## 5. Oppdatering (etter `git push` fra Windows)
 
