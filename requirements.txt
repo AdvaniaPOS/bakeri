@@ -1,0 +1,53 @@
+# Lampeland Bakeri - Ordresystem Dependencies
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Database
+sqlalchemy>=2.0.25
+psycopg2-binary>=2.9.9
+alembic>=1.13.0
+
+# Validation
+pydantic>=2.5.0
+pydantic[email]>=2.5.0
+
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# Task Queue (for scheduled jobs and retries)
+celery>=5.3.0
+redis>=5.0.0
+
+# HTTP Client (for SuSoft API)
+httpx>=0.26.0
+tenacity>=8.2.0  # Retry logic
+
+# Google Maps API
+googlemaps>=4.10.0
+
+# PDF Generation
+reportlab>=4.0.0
+python-barcode>=0.15.0  # For Zebra labels
+Pillow>=10.0.0
+
+# Date/Time handling
+python-dateutil>=2.8.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+httpx>=0.26.0  # For TestClient
+
+# Development
+black>=23.0.0
+ruff>=0.1.0
+mypy>=1.8.0
+
+# Production
+gunicorn>=21.0.0

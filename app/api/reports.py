@@ -1,0 +1,363 @@
+"""
+Reports & analytics endpoints. Tenant-scoped.
+"""
+from collections import defaultdict
+from datetime import date, timedelta
+from typing import List, Optional
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
+
+from ..database import get_db
+from ..dependencies import get_current_tenant
+from ..auth_models import Tenant
+from ..models import Order, OrderLine, Customer, Product, Route, OrderStatus
+from ..tenant_scope import get_or_404
+
+router = APIRouter(prefix="/reports", tags=["Reports"])
+
+NORWEGIAN_DAYS = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag"]
+
+
+def _active_orders_query(tenant_id: int, target_date: date):
+    return (
+        select(Order)
+        .where(
+            Order.tenant_id == tenant_id,
+            Order.delivery_date == target_date,
+            Order.is_deleted == False,
+            Order.status != OrderStatus.CANCELLED,
+        )
+        .options(
+            selectinload(Order.customer),
+            selectinload(Order.lines).selectinload(OrderLine.product),
+        )
+    )
+
+
+@router.get("/production/{target_date}")
+async def get_production_report(
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    orders = db.execute(_active_orders_query(tenant.id, target_date)).scalars().all()
+
+    products_agg = {}
+    customers = set()
+    for order in orders:
+        customers.add(order.customer_id)
+        for line in order.lines:
+            p = line.product
+            if not p:
+                continue
+            entry = products_agg.setdefault(p.id, {
+                "product_id": p.id,
+                "product_name": p.name,
+                "category": p.category or "Annet",
+                "unit": p.unit,
+                "total_quantity": 0,
+            })
+            entry["total_quantity"] += line.quantity
+
+    by_category = defaultdict(list)
+    for entry in products_agg.values():
+        by_category[entry["category"]].append(entry)
+    for cat in by_category:
+        by_category[cat].sort(key=lambda x: x["product_name"])
+
+    return {
+        "date": target_date,
+        "total_orders": len(orders),
+        "total_customers": len(customers),
+        "total_products": len(products_agg),
+        "products_by_category": dict(by_category),
+    }
+
+
+@router.get("/production-week")
+async def get_weekly_production_overview(
+    start_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    days = []
+    total_orders = 0
+    total_customers = set()
+    for i in range(7):
+        d = start_date + timedelta(days=i)
+        orders = db.execute(_active_orders_query(tenant.id, d)).scalars().all()
+        cust_ids = {o.customer_id for o in orders}
+        total_orders += len(orders)
+        total_customers.update(cust_ids)
+        days.append({
+            "date": d,
+            "day_name": NORWEGIAN_DAYS[d.weekday()],
+            "order_count": len(orders),
+            "customer_count": len(cust_ids),
+        })
+
+    return {
+        "start_date": start_date,
+        "end_date": start_date + timedelta(days=6),
+        "days": days,
+        "total_orders": total_orders,
+        "total_customers": len(total_customers),
+    }
+
+
+def _build_stops(orders):
+    stops = []
+    total_items = 0
+    for idx, order in enumerate(sorted(orders, key=lambda o: (o.route_position or 9999, o.customer.name if o.customer else ""))):
+        cust = order.customer
+        if not cust:
+            continue
+        addr = ", ".join(filter(None, [
+            cust.street_address,
+            f"{cust.postal_code or ''} {cust.city or ''}".strip(),
+        ]))
+        line_items = [
+            {
+                "product_name": line.product.name if line.product else "?",
+                "quantity": line.quantity,
+                "unit": line.product.unit if line.product else "",
+            }
+            for line in order.lines
+        ]
+        items_count = sum(l["quantity"] for l in line_items)
+        total_items += items_count
+        stops.append({
+            "stop_number": idx + 1,
+            "order_id": order.id,
+            "customer_id": cust.id,
+            "customer_name": cust.name,
+            "company_name": cust.company_name,
+            "address": addr,
+            "phone": cust.phone,
+            "delivery_instructions": cust.delivery_instructions,
+            "delivery_window": {
+                "start": cust.delivery_window_start.isoformat() if cust.delivery_window_start else None,
+                "end": cust.delivery_window_end.isoformat() if cust.delivery_window_end else None,
+            },
+            "lines": line_items,
+            "total_items": items_count,
+        })
+    return stops, total_items
+
+
+@router.get("/delivery-list/{route_id}/{target_date}")
+async def get_route_delivery_list(
+    route_id: int,
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    route = get_or_404(db, Route, route_id, tenant.id, "Route not found")
+
+    orders = db.execute(
+        _active_orders_query(tenant.id, target_date)
+        .join(Customer, Customer.id == Order.customer_id)
+        .where(Customer.route_id == route_id)
+    ).scalars().all()
+
+    stops, total_items = _build_stops(orders)
+    return {
+        "route_id": route.id,
+        "route_name": route.name,
+        "date": target_date,
+        "stops": stops,
+        "total_stops": len(stops),
+        "total_items": total_items,
+    }
+
+
+@router.get("/delivery-list/{route_id}/{target_date}/google-maps-url")
+async def get_google_maps_route_url(
+    route_id: int,
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    route = get_or_404(db, Route, route_id, tenant.id, "Route not found")
+
+    orders = db.execute(
+        _active_orders_query(tenant.id, target_date)
+        .join(Customer, Customer.id == Order.customer_id)
+        .where(Customer.route_id == route_id)
+    ).scalars().all()
+
+    addresses = []
+    for order in sorted(orders, key=lambda o: o.route_position or 9999):
+        cust = order.customer
+        if not cust:
+            continue
+        addr = ", ".join(filter(None, [
+            cust.street_address,
+            f"{cust.postal_code or ''} {cust.city or ''}".strip(),
+        ]))
+        if addr:
+            addresses.append(addr)
+
+    if not addresses:
+        raise HTTPException(status_code=404, detail="No deliveries on this route")
+
+    if len(addresses) == 1:
+        url = f"https://www.google.com/maps/search/?api=1&query={quote(addresses[0])}"
+    else:
+        origin = quote(addresses[0])
+        destination = quote(addresses[-1])
+        waypoints = "|".join(quote(a) for a in addresses[1:-1])
+        url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
+        if waypoints:
+            url += f"&waypoints={waypoints}"
+        url += "&travelmode=driving"
+
+    return {"url": url, "stops": len(addresses), "route_name": route.name}
+
+
+@router.get("/delivery-summary/{target_date}")
+async def get_all_routes_delivery_summary(
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    routes = db.execute(
+        select(Route).where(Route.tenant_id == tenant.id, Route.is_active == True)
+    ).scalars().all()
+
+    summaries = []
+    for route in routes:
+        orders = db.execute(
+            _active_orders_query(tenant.id, target_date)
+            .join(Customer, Customer.id == Order.customer_id)
+            .where(Customer.route_id == route.id)
+        ).scalars().all()
+        total_items = sum(line.quantity for o in orders for line in o.lines)
+        summaries.append({
+            "route_id": route.id,
+            "route_name": route.name,
+            "stops": len(orders),
+            "total_items": total_items,
+        })
+
+    return {"date": target_date, "routes": summaries}
+
+
+@router.get("/packing-slip/{order_id}")
+async def get_packing_slip(
+    order_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    order = db.execute(
+        select(Order)
+        .where(Order.id == order_id, Order.tenant_id == tenant.id)
+        .options(
+            selectinload(Order.customer),
+            selectinload(Order.lines).selectinload(OrderLine.product),
+        )
+    ).scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    cust = order.customer
+    return {
+        "order_id": order.id,
+        "delivery_date": order.delivery_date,
+        "customer": {
+            "name": cust.name if cust else None,
+            "company_name": cust.company_name if cust else None,
+            "address": ", ".join(filter(None, [
+                cust.street_address if cust else None,
+                f"{cust.postal_code or ''} {cust.city or ''}".strip() if cust else None,
+            ])),
+            "phone": cust.phone if cust else None,
+            "delivery_instructions": cust.delivery_instructions if cust else None,
+        },
+        "lines": [
+            {
+                "product_name": line.product.name if line.product else "?",
+                "quantity": line.quantity,
+                "unit": line.product.unit if line.product else "",
+                "notes": line.notes,
+            }
+            for line in order.lines
+        ],
+        "total_amount_excl_vat": float(order.total_amount_excl_vat or 0),
+        "total_vat": float(order.total_vat or 0),
+        "total_amount_incl_vat": float(order.total_amount_incl_vat or 0),
+        "notes": order.notes,
+    }
+
+
+@router.get("/route-packing-slips/{route_id}/{target_date}")
+async def get_route_packing_slips(
+    route_id: int,
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    get_or_404(db, Route, route_id, tenant.id, "Route not found")
+
+    orders = db.execute(
+        _active_orders_query(tenant.id, target_date)
+        .join(Customer, Customer.id == Order.customer_id)
+        .where(Customer.route_id == route_id)
+    ).scalars().all()
+
+    return [
+        await get_packing_slip(order.id, db, tenant)
+        for order in sorted(orders, key=lambda o: o.route_position or 9999)
+    ]
+
+
+@router.get("/customer-history/{customer_id}")
+async def get_customer_order_history(
+    customer_id: int,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    get_or_404(db, Customer, customer_id, tenant.id, "Customer not found")
+
+    query = (
+        select(Order)
+        .where(
+            Order.tenant_id == tenant.id,
+            Order.customer_id == customer_id,
+            Order.is_deleted == False,
+        )
+        .options(selectinload(Order.lines).selectinload(OrderLine.product))
+        .order_by(Order.delivery_date.desc())
+        .limit(limit)
+    )
+    if from_date:
+        query = query.where(Order.delivery_date >= from_date)
+    if to_date:
+        query = query.where(Order.delivery_date <= to_date)
+
+    orders = db.execute(query).scalars().all()
+
+    return [
+        {
+            "order_id": o.id,
+            "delivery_date": o.delivery_date,
+            "status": o.status.value,
+            "total_amount_incl_vat": float(o.total_amount_incl_vat or 0),
+            "lines_count": len(o.lines),
+            "lines": [
+                {
+                    "product_name": l.product.name if l.product else "?",
+                    "quantity": l.quantity,
+                    "unit_price": float(l.unit_price),
+                }
+                for l in o.lines
+            ],
+        }
+        for o in orders
+    ]
