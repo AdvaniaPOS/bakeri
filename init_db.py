@@ -20,6 +20,7 @@ def create_tables():
     print("🗄️  Creating database tables...")
     # Import all models to register them with Base
     from app import models  # noqa: F401
+    from app import auth_models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     print("✅ Tables created successfully")
 
