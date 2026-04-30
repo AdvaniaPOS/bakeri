@@ -131,6 +131,8 @@ export default function Settings() {
       setTriggeringHorizon(false);
     }
   };
+
+  const saveConfig = async () => {
     setSavingConfig(true);
     setConfigMessage(null);
     try {
@@ -528,9 +530,6 @@ export default function Settings() {
             <div>
               <h2 className="font-semibold text-gray-900">Bestillingsfrister</h2>
               <p className="text-sm text-gray-500">Konfigurer tidsfrister for bestillinger</p>
-            </div>
-          </div>
-
             </div>
           </div>
         </div>
