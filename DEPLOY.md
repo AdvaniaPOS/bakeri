@@ -256,8 +256,50 @@ curl -I http://127.0.0.1/
 
 ## 7. Backup
 
+Vi har et ferdig backup-script som lager komprimerte daglige dumper og roterer dem (14 daglige + ukentlige i 60 dager).
+
+### 7a. Førstegangs-oppsett
+
 ```bash
-# Postgres-dump (daglig anbefalt)
-PGPASSWORD=postgres pg_dump -h 127.0.0.1 -U postgres lampeland_bakeri \
-  > ~/backups/bakeri_$(date +%Y%m%d).sql
+chmod +x ~/bakeri/scripts/backup_db.sh ~/bakeri/scripts/restore_db.sh
+mkdir -p ~/backups/daily ~/backups/weekly
+sudo touch /var/log/bakeri-backup.log
+sudo chown poshubadmin:poshubadmin /var/log/bakeri-backup.log
 ```
+
+### 7b. Cron (kjøres som poshubadmin)
+
+```bash
+sudo crontab -e -u poshubadmin
+```
+
+Legg til linja:
+
+```cron
+15 2 * * * /home/poshubadmin/bakeri/scripts/backup_db.sh >> /var/log/bakeri-backup.log 2>&1
+```
+
+### 7c. Test backupen umiddelbart
+
+```bash
+~/bakeri/scripts/backup_db.sh
+ls -lh ~/backups/daily/
+tail /var/log/bakeri-backup.log
+```
+
+### 7d. Restore (når katastrofen rammer)
+
+```bash
+~/bakeri/scripts/restore_db.sh ~/backups/daily/bakeri_20260430_021500.sql.gz
+sudo systemctl restart bakeri-backend
+```
+
+### 7e. Off-site (anbefalt)
+
+Backups på samme server hjelper IKKE ved disk-feil eller ransomware. Vurder rclone/restic mot ekstern lagring (S3, Backblaze B2, OneDrive). Eksempel:
+
+```bash
+# Etter backup_db.sh — kopier til ekstern lagring
+rclone copy ~/backups/daily b2:bakeri-backups/daily --max-age 24h
+```
+
