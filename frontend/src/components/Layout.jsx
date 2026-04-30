@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -18,6 +18,7 @@ import {
   TrendingDown,
   Moon,
   Sun,
+  Menu,
   X
 } from 'lucide-react';
 
@@ -41,6 +42,12 @@ const superAdminNavigation = [
 export default function Layout() {
   const { user, tenant, logout, notification, dismissNotification } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Mobil-meny (drawer)
+  const [mobileOpen, setMobileOpen] = useState(false);
+  // Lukk drawer ved navigasjon
+  useEffect(() => { setMobileOpen(false); }, [location.pathname]);
 
   // Tema (lys/morkt) — persistert i localStorage
   const [theme, setTheme] = useState(() => {
@@ -91,8 +98,45 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen flex app-bg">
+      {/* Mobil topp-bar (vises kun under lg) */}
+      <header className="lg:hidden fixed top-0 inset-x-0 z-30 flex items-center justify-between px-3 h-12 app-sidebar border-b border-gray-200 app-divider">
+        <button
+          onClick={() => setMobileOpen(true)}
+          className="p-2 -ml-2 rounded-md text-gray-700 hover:bg-gray-200/60"
+          aria-label="Åpne meny"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-6 h-6 bg-amber-600 rounded-md flex items-center justify-center shadow-sm flex-shrink-0">
+            <Croissant className="w-3.5 h-3.5 text-white" />
+          </div>
+          <span className="text-sm font-semibold text-gray-900 truncate">{tenant?.name || 'Bakeri'}</span>
+        </div>
+        <button
+          onClick={toggleTheme}
+          className="p-2 -mr-2 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60"
+          aria-label="Bytt tema"
+        >
+          {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
+      </header>
+
+      {/* Bakteppe naar mobil-drawer er aapen */}
+      {mobileOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-40 bg-black/50"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-60 flex flex-col app-sidebar">
+      <aside
+        className={`w-60 flex flex-col app-sidebar fixed inset-y-0 left-0 z-50 transform transition-transform duration-200 ease-out lg:static lg:translate-x-0 ${
+          mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        }`}
+      >
         {/* Logo / tenant */}
         <div className="px-4 py-3 flex items-center gap-2.5">
           <div className="w-8 h-8 bg-amber-600 rounded-md flex items-center justify-center shadow-sm">
@@ -105,11 +149,18 @@ export default function Layout() {
           </div>
           <button
             onClick={toggleTheme}
-            className="p-1.5 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60 transition-colors"
+            className="hidden lg:inline-flex p-1.5 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60 transition-colors"
             title={theme === 'dark' ? 'Bytt til lyst tema' : 'Bytt til mørkt tema'}
             aria-label="Bytt tema"
           >
             {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+          <button
+            onClick={() => setMobileOpen(false)}
+            className="lg:hidden p-1.5 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60"
+            aria-label="Lukk meny"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
 
@@ -175,8 +226,8 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto app-main">
-        <div className="border-l border-gray-200 min-h-full app-divider">
+      <main className="flex-1 overflow-auto app-main pt-12 lg:pt-0">
+        <div className="lg:border-l border-gray-200 min-h-full app-divider">
           <Outlet />
         </div>
       </main>
