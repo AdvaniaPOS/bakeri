@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Search, Filter, Plus, Edit2, Trash2, RefreshCw, Package } from 'lucide-react';
+import { Search, Filter, Plus, Edit2, Trash2, RefreshCw, Package, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Pagination from '../components/Pagination';
 
@@ -56,6 +56,7 @@ export default function Products() {
       // Map API fields to component expected format
       const mapped = (data.items || []).map(p => ({
         id: p.susoft_product_id || p.id,
+        dbId: p.id,
         name: p.name,
         description: p.description || '',
         category: p.category || 'ANNET',
@@ -80,6 +81,25 @@ export default function Products() {
     }, search ? 300 : 0);
     return () => clearTimeout(handle);
   }, [statusFilter, search]);
+
+  const toggleActive = async (product) => {
+    const next = !product.active;
+    if (!next && !confirm(`Skjul "${product.name}"? Produktet blir skjult fra lister.`)) return;
+    try {
+      const response = await authFetch(`/api/v1/products/${product.dbId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: next })
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Kunne ikke endre status');
+      }
+      setProducts((prev) => prev.map(p => p.dbId === product.dbId ? { ...p, active: next } : p));
+    } catch (err) {
+      alert(err.message);
+    }
+  };
 
   // Get unique categories
   const categories = [...new Set(products.map(p => p.category))];
@@ -169,7 +189,7 @@ export default function Products() {
                 statusFilter === 'inactive' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              Inaktive ({inactiveCount})
+              Skjulte ({inactiveCount})
             </button>
           </div>
           <select
@@ -247,16 +267,24 @@ export default function Products() {
                     <td className="text-gray-700 text-xs">{product.unit}</td>
                     <td>
                       <span className={`badge ${product.active ? 'badge-success' : 'badge-neutral'}`}>
-                        {product.active ? 'Aktiv' : 'Inaktiv'}
+                        {product.active ? 'Aktiv' : 'Skjult'}
                       </span>
                     </td>
                     <td>
                       <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => toggleActive(product)}
+                          className={`p-1.5 rounded ${
+                            product.active
+                              ? 'text-gray-400 hover:text-amber-700 hover:bg-amber-50'
+                              : 'text-amber-600 hover:text-green-700 hover:bg-green-50'
+                          }`}
+                          title={product.active ? 'Skjul produkt' : 'Vis produkt igjen'}
+                        >
+                          {product.active ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
                         <button className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded" title="Rediger">
                           <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded" title="Slett">
-                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>

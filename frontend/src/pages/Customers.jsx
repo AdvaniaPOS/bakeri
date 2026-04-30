@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Search, Plus, Building2, Phone, Mail, MapPin, RefreshCw, Edit2, X, Check, ClipboardList, AlertTriangle, CalendarClock, PlayCircle, PauseCircle } from 'lucide-react';
+import { Search, Plus, Building2, Phone, Mail, MapPin, RefreshCw, Edit2, X, Check, ClipboardList, AlertTriangle, CalendarClock, PlayCircle, PauseCircle, Eye, EyeOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import QuickOverrideModal from '../components/QuickOverrideModal';
@@ -71,7 +71,7 @@ export default function Customers() {
         : '/api/v1/customers';
       
       const response = await authFetch(url, {
-        method: editingCustomer ? 'PUT' : 'POST',
+        method: editingCustomer ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(customerData)
       });
@@ -84,6 +84,26 @@ export default function Customers() {
       setShowNewModal(false);
       setEditingCustomer(null);
       fetchCustomers();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const toggleActive = async (customer) => {
+    const next = !customer.is_active;
+    if (!next && !confirm(`Skjul "${customer.name}"? Kunden blir inaktiv og skjult fra lister.`)) return;
+    try {
+      const response = await authFetch(`/api/v1/customers/${customer.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: next })
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Kunne ikke endre status');
+      }
+      // Optimistisk oppdatering
+      setCustomers((prev) => prev.map(c => c.id === customer.id ? { ...c, is_active: next } : c));
     } catch (err) {
       alert(err.message);
     }
@@ -146,7 +166,7 @@ export default function Customers() {
                 statusFilter === 'inactive' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              Inaktive ({inactiveCount})
+              Skjulte ({inactiveCount})
             </button>
           </div>
           <div className="relative flex-1 min-w-[220px]">
@@ -216,7 +236,7 @@ export default function Customers() {
                     </td>
                     <td>
                       <span className={`badge ${customer.is_active ? 'badge-success' : 'badge-neutral'}`}>
-                        {customer.is_active ? 'Aktiv' : 'Inaktiv'}
+                        {customer.is_active ? 'Aktiv' : 'Skjult'}
                       </span>
                     </td>
                     <td>
@@ -248,6 +268,17 @@ export default function Customers() {
                           title="Rediger"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => toggleActive(customer)}
+                          className={`p-1.5 rounded ${
+                            customer.is_active
+                              ? 'text-gray-400 hover:text-amber-700 hover:bg-amber-50'
+                              : 'text-amber-600 hover:text-green-700 hover:bg-green-50'
+                          }`}
+                          title={customer.is_active ? 'Skjul kunde' : 'Vis kunde igjen'}
+                        >
+                          {customer.is_active ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </button>
                       </div>
                     </td>
