@@ -2,12 +2,20 @@
 Reports & analytics endpoints. Tenant-scoped.
 """
 from collections import defaultdict
-from datetime import date, timedelta
-from typing import List, Optional
+from datetime import date, datetime, timedelta
+from typing import Annotated, List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import Response
+
+# Pattern that matches ISO date YYYY-MM-DD only (without trailing .pdf etc.)
+_DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
+DateParam = Annotated[str, Path(pattern=_DATE_PATTERN)]
+
+
+def _parse_date(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -60,10 +68,11 @@ def _active_orders_query(tenant_id: int, target_date: date):
 
 @router.get("/production/{target_date}")
 async def get_production_report(
-    target_date: date,
+    target_date: DateParam,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
+    target_date = _parse_date(target_date)
     orders = db.execute(_active_orders_query(tenant.id, target_date)).scalars().all()
 
     products_agg = {}
@@ -172,10 +181,11 @@ def _build_stops(orders):
 @router.get("/delivery-list/{route_id}/{target_date}")
 async def get_route_delivery_list(
     route_id: int,
-    target_date: date,
+    target_date: DateParam,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
+    target_date = _parse_date(target_date)
     route = get_or_404(db, Route, route_id, tenant.id, "Route not found")
 
     orders = db.execute(
@@ -431,7 +441,7 @@ async def production_report_pdf(
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    data = await get_production_report(target_date, db, tenant)
+    data = await get_production_report(target_date.isoformat(), db, tenant)
     ctx = {
         **tenant_header_context(tenant),
         "target_date": target_date,

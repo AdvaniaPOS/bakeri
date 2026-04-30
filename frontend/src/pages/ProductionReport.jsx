@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { 
   Calendar, RefreshCw, ChevronLeft, ChevronRight, 
-  Package, ClipboardList, Printer, Download, Users 
+  Package, ClipboardList, Download, Users 
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { openPdf } from '../utils/pdf';
@@ -125,10 +125,6 @@ export default function ProductionReport() {
     setSelectedDate(new Date());
   };
 
-  const printReport = () => {
-    window.print();
-  };
-
   const downloadProductionPdf = async () => {
     try {
       await openPdf(authFetch, `/api/v1/reports/production/${formatDateISO(selectedDate)}.pdf`);
@@ -168,9 +164,6 @@ export default function ProductionReport() {
           </button>
           <button onClick={downloadPackingListPdf} className="btn-secondary" title="Pakkeliste pr kunde som PDF">
             <Download className="w-4 h-4" /> Pakkeliste (PDF)
-          </button>
-          <button onClick={printReport} className="btn-secondary" title="Skriv ut nettsiden">
-            <Printer className="w-4 h-4" /> Skriv ut
           </button>
           <button onClick={() => view === 'day' ? fetchDailyReport() : fetchWeekOverview()} className="btn-secondary" title="Oppdater">
             <RefreshCw className="w-4 h-4" /> Oppdater
