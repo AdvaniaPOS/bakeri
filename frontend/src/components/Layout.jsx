@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   LayoutDashboard, 
@@ -16,6 +16,8 @@ import {
   Building2,
   CheckCircle2,
   TrendingDown,
+  Moon,
+  Sun,
   X
 } from 'lucide-react';
 
@@ -39,6 +41,19 @@ const superAdminNavigation = [
 export default function Layout() {
   const { user, tenant, logout, notification, dismissNotification } = useAuth();
   const navigate = useNavigate();
+
+  // Tema (lys/morkt) — persistert i localStorage
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === 'undefined') return 'light';
+    return localStorage.getItem('theme') || 'light';
+  });
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') root.classList.add('dark');
+    else root.classList.remove('dark');
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+  const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
 
   // Auto-dismiss toast etter 5 sek
   useEffect(() => {
@@ -75,9 +90,9 @@ export default function Layout() {
   };
 
   return (
-    <div className="min-h-screen flex" style={{ background: '#f1f1f1' }}>
+    <div className="min-h-screen flex app-bg">
       {/* Sidebar */}
-      <aside className="w-60 flex flex-col" style={{ background: '#f1f1f1' }}>
+      <aside className="w-60 flex flex-col app-sidebar">
         {/* Logo / tenant */}
         <div className="px-4 py-3 flex items-center gap-2.5">
           <div className="w-8 h-8 bg-amber-600 rounded-md flex items-center justify-center shadow-sm">
@@ -141,6 +156,13 @@ export default function Layout() {
               </p>
             </div>
             <button
+              onClick={toggleTheme}
+              className="p-1 text-gray-400 hover:text-gray-900 hover:bg-white rounded transition-colors"
+              title={theme === 'dark' ? 'Lyst tema' : 'Mørkt tema'}
+            >
+              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+            <button
               onClick={handleLogout}
               className="p-1 text-gray-400 hover:text-red-600 hover:bg-white rounded transition-colors"
               title="Logg ut"
@@ -152,8 +174,8 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto" style={{ background: '#f6f6f7' }}>
-        <div className="border-l border-gray-200 min-h-full">
+      <main className="flex-1 overflow-auto app-main">
+        <div className="border-l border-gray-200 min-h-full app-divider">
           <Outlet />
         </div>
       </main>
