@@ -5,6 +5,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Advania Ordresystem</title>
+    <script>
+      // Sett tema FOR React mounter for aa unngaa flash av lyst tema
+      (function() {
+        try {
+          var t = localStorage.getItem('theme') || 'light';
+          if (t === 'dark') document.documentElement.classList.add('dark');
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

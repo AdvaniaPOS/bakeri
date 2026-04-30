@@ -111,7 +111,7 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f6f6f7] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen app-main flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full">
         {/* Logo and title */}
         <div className="text-center mb-6">

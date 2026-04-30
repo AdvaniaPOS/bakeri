@@ -6,9 +6,11 @@
  * - New tenant registration
  * - Password visibility toggle
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { Sun, Moon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { getStoredTheme, applyTheme } from '../theme';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -18,6 +20,8 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState(null);
+  const [theme, setTheme] = useState(getStoredTheme);
+  useEffect(() => { applyTheme(theme); }, [theme]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -38,7 +42,15 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f6f6f7] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen app-main flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative">
+      <button
+        onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+        className="absolute top-4 right-4 p-2 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60"
+        title={theme === 'dark' ? 'Bytt til lyst tema' : 'Bytt til mørkt tema'}
+        aria-label="Bytt tema"
+      >
+        {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+      </button>
       <div className="max-w-md w-full">
         {/* Logo and title */}
         <div className="text-center mb-6">

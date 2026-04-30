@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { getStoredTheme, applyTheme } from '../theme';
 import { 
   LayoutDashboard, 
   Package, 
@@ -49,17 +50,9 @@ export default function Layout() {
   // Lukk drawer ved navigasjon
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
 
-  // Tema (lys/morkt) — persistert i localStorage
-  const [theme, setTheme] = useState(() => {
-    if (typeof window === 'undefined') return 'light';
-    return localStorage.getItem('theme') || 'light';
-  });
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === 'dark') root.classList.add('dark');
-    else root.classList.remove('dark');
-    localStorage.setItem('theme', theme);
-  }, [theme]);
+  // Tema (lys/morkt) — persistert i localStorage, sentralt handtert
+  const [theme, setTheme] = useState(getStoredTheme);
+  useEffect(() => { applyTheme(theme); }, [theme]);
   const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
 
   // Auto-dismiss toast etter 5 sek
