@@ -545,6 +545,36 @@ class RouteCustomerReorder(BaseModel):
     customer_order: List[int]  # List of customer IDs in desired order
 
 
+class RoutePostalRuleBase(BaseModel):
+    from_code: str = Field(..., min_length=1, max_length=10)
+    to_code: str = Field(..., min_length=1, max_length=10)
+    label: Optional[str] = Field(None, max_length=100)
+
+    @field_validator('from_code', 'to_code')
+    @classmethod
+    def strip_code(cls, v: str) -> str:
+        return v.strip()
+
+
+class RoutePostalRuleCreate(RoutePostalRuleBase):
+    pass
+
+
+class RoutePostalRuleResponse(RoutePostalRuleBase):
+    id: int
+    route_id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoutePostalAutoAssignPreview(BaseModel):
+    matched_customers: int
+    new_assignments: int
+    already_on_route: int
+    conflicts: int  # kunder som allerede er paa en annen rute
+    customer_ids_to_assign: List[int]
+    conflict_examples: List[dict] = []
+
+
 class DeliveryRouteResponse(BaseModel):
     id: int
     route_date: date

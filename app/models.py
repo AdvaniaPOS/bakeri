@@ -222,11 +222,38 @@ class Route(Base, TimestampMixin, TenantMixin):
     
     # Relationships
     customers: Mapped[List["Customer"]] = relationship(back_populates="route")
+    postal_rules: Mapped[List["RoutePostalRule"]] = relationship(
+        back_populates="route", cascade="all, delete-orphan"
+    )
     
     __table_args__ = (
         # Route name unique within tenant
         UniqueConstraint("tenant_id", "name", name="uq_route_tenant_name"),
         Index("ix_routes_tenant_active", "tenant_id", "is_active", "sort_order"),
+    )
+
+
+class RoutePostalRule(Base, TimestampMixin, TenantMixin):
+    """
+    Postnummer-serie som tilhoerer en rute.
+    En rute kan ha flere serier; en kunde matcher hvis postnummer ligger
+    innenfor minst en serie. For enkelt-postnummer settes from_code = to_code.
+    """
+    __tablename__ = "route_postal_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    route_id: Mapped[int] = mapped_column(
+        ForeignKey("routes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    from_code: Mapped[str] = mapped_column(String(10), nullable=False, comment="Fra-postnummer (inklusiv)")
+    to_code: Mapped[str] = mapped_column(String(10), nullable=False, comment="Til-postnummer (inklusiv)")
+    label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, comment="Valgfri etikett, f.eks. 'Sentrum'")
+
+    route: Mapped["Route"] = relationship(back_populates="postal_rules")
+
+    __table_args__ = (
+        Index("ix_route_postal_rules_tenant_route", "tenant_id", "route_id"),
+        CheckConstraint("from_code <= to_code", name="ck_postal_rule_from_le_to"),
     )
 
 

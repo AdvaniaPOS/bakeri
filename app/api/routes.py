@@ -11,10 +11,11 @@ from sqlalchemy.orm import Session, selectinload
 from ..database import get_db
 from ..dependencies import get_current_tenant
 from ..auth_models import Tenant
-from ..models import Route, Customer, Order, OrderLine, OrderStatus
+from ..models import Route, Customer, Order, OrderLine, OrderStatus, RoutePostalRule
 from ..schemas import (
     RouteCreate, RouteUpdate, RouteResponse, RouteWithCustomers,
-    RouteListResponse
+    RouteListResponse, RoutePostalRuleCreate, RoutePostalRuleResponse,
+    RoutePostalAutoAssignPreview,
 )
 from ..tenant_scope import get_or_404
 
@@ -238,3 +239,143 @@ async def reorder_route_customers(
 
     db.commit()
     return {"message": f"Reordered {len(customer_order)} stops for {target_date}"}
+
+
+# =============================================================================
+# POSTAL CODE RULES
+# =============================================================================
+
+@router.get("/{route_id}/postal-rules", response_model=List[RoutePostalRuleResponse])
+async def list_postal_rules(
+    route_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    get_or_404(db, Route, route_id, tenant.id, "Route not found")
+    rules = db.execute(
+        select(RoutePostalRule).where(
+            RoutePostalRule.tenant_id == tenant.id,
+            RoutePostalRule.route_id == route_id,
+        ).order_by(RoutePostalRule.from_code)
+    ).scalars().all()
+    return rules
+
+
+@router.post("/{route_id}/postal-rules", response_model=RoutePostalRuleResponse, status_code=status.HTTP_201_CREATED)
+async def add_postal_rule(
+    route_id: int,
+    payload: RoutePostalRuleCreate,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    get_or_404(db, Route, route_id, tenant.id, "Route not found")
+    if payload.from_code > payload.to_code:
+        raise HTTPException(status_code=400, detail="from_code maa vaere mindre eller lik to_code")
+    rule = RoutePostalRule(
+        tenant_id=tenant.id,
+        route_id=route_id,
+        from_code=payload.from_code,
+        to_code=payload.to_code,
+        label=payload.label,
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.delete("/{route_id}/postal-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_postal_rule(
+    route_id: int,
+    rule_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    rule = db.execute(
+        select(RoutePostalRule).where(
+            RoutePostalRule.id == rule_id,
+            RoutePostalRule.route_id == route_id,
+            RoutePostalRule.tenant_id == tenant.id,
+        )
+    ).scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    db.delete(rule)
+    db.commit()
+
+
+def _find_matching_customers(db: Session, tenant_id: int, route_id: int):
+    rules = db.execute(
+        select(RoutePostalRule).where(
+            RoutePostalRule.tenant_id == tenant_id,
+            RoutePostalRule.route_id == route_id,
+        )
+    ).scalars().all()
+    if not rules:
+        return [], rules
+    from sqlalchemy import or_, and_
+    conditions = [
+        and_(Customer.postal_code >= r.from_code, Customer.postal_code <= r.to_code)
+        for r in rules
+    ]
+    customers = db.execute(
+        select(Customer).where(
+            Customer.tenant_id == tenant_id,
+            Customer.is_deleted == False,
+            Customer.is_active == True,
+            Customer.postal_code.isnot(None),
+            Customer.postal_code != '',
+            or_(*conditions),
+        )
+    ).scalars().all()
+    return customers, rules
+
+
+@router.get("/{route_id}/auto-assign-preview", response_model=RoutePostalAutoAssignPreview)
+async def auto_assign_preview(
+    route_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    get_or_404(db, Route, route_id, tenant.id, "Route not found")
+    customers, rules = _find_matching_customers(db, tenant.id, route_id)
+    if not rules:
+        raise HTTPException(status_code=400, detail="Ingen postnummer-regler definert for denne ruten")
+    new_assign = []
+    already = 0
+    conflicts = []
+    for c in customers:
+        if c.route_id == route_id:
+            already += 1
+        elif c.route_id is None:
+            new_assign.append(c.id)
+        else:
+            conflicts.append({"customer_id": c.id, "name": c.name, "current_route_id": c.route_id, "postal_code": c.postal_code})
+    return RoutePostalAutoAssignPreview(
+        matched_customers=len(customers),
+        new_assignments=len(new_assign),
+        already_on_route=already,
+        conflicts=len(conflicts),
+        customer_ids_to_assign=new_assign,
+        conflict_examples=conflicts[:10],
+    )
+
+
+@router.post("/{route_id}/auto-assign-commit")
+async def auto_assign_commit(
+    route_id: int,
+    overwrite_conflicts: bool = False,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    get_or_404(db, Route, route_id, tenant.id, "Route not found")
+    customers, rules = _find_matching_customers(db, tenant.id, route_id)
+    if not rules:
+        raise HTTPException(status_code=400, detail="Ingen postnummer-regler definert for denne ruten")
+    assigned = 0
+    for c in customers:
+        if c.route_id is None or (overwrite_conflicts and c.route_id != route_id):
+            c.route_id = route_id
+            assigned += 1
+    db.commit()
+    return {"assigned": assigned, "matched": len(customers)}
