@@ -273,29 +273,47 @@ sudo chown poshubadmin:poshubadmin /var/log/bakeri-backup.log
 > Skriptet auto-detekterer `pg_dump` — hvis ikke i `PATH` ser det i
 > `/usr/lib/postgresql/*/bin/`. Du kan også sette `PG_DUMP=/full/sti` som env.
 
-### 7b. Cron (kjøres som poshubadmin)
+### 7b. Lagre DB-credentials i en env-fil
+
+Backup-skriptet trenger samme bruker/passord som appen (`bakeri`, ikke `postgres`).
+Hent dem fra `.env` (sjekk `DATABASE_URL`-linja) og lagre i en egen fil:
+
+```bash
+cat > ~/.bakeri-backup.env <<'EOF'
+DB_USER=bakeri
+PGPASSWORD=<passord_fra_.env>
+DB_NAME=lampeland_bakeri
+DB_HOST=127.0.0.1
+DB_PORT=5432
+EOF
+chmod 600 ~/.bakeri-backup.env
+```
+
+### 7c. Cron (kjøres som poshubadmin)
 
 ```bash
 sudo crontab -e -u poshubadmin
 ```
 
-Legg til linja:
+Legg til linja (laster env-fila før kjøring):
 
 ```cron
-15 2 * * * /home/poshubadmin/bakeri/scripts/backup_db.sh >> /var/log/bakeri-backup.log 2>&1
+15 2 * * * set -a; . /home/poshubadmin/.bakeri-backup.env; set +a; /home/poshubadmin/bakeri/scripts/backup_db.sh >> /var/log/bakeri-backup.log 2>&1
 ```
 
-### 7c. Test backupen umiddelbart
+### 7d. Test backupen umiddelbart
 
 ```bash
+set -a; source ~/.bakeri-backup.env; set +a
 ~/bakeri/scripts/backup_db.sh
 ls -lh ~/backups/daily/
 tail /var/log/bakeri-backup.log
 ```
 
-### 7d. Restore (når katastrofen rammer)
+### 7e. Restore (når katastrofen rammer)
 
 ```bash
+set -a; source ~/.bakeri-backup.env; set +a
 ~/bakeri/scripts/restore_db.sh ~/backups/daily/bakeri_20260430_021500.sql.gz
 sudo systemctl restart bakeri-backend
 ```
