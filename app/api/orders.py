@@ -234,6 +234,21 @@ async def get_orders_pending_sync(
     ]
 
 
+@router.get("/horizon-status")
+async def get_horizon_status(
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Returnerer status for siste periodeplan-sjekk for innlogget tenant."""
+    today = today_oslo()
+    last = tenant.last_horizon_check_at
+    return {
+        "last_check_at": last.isoformat() if last else None,
+        "checked_today": bool(last and last.date() == today),
+        "today": today.isoformat(),
+    }
+
+
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: int,
@@ -983,21 +998,6 @@ def _run_ensure_horizon(tenant_id: int) -> dict:
     finally:
         db.close()
         lock.release()
-
-
-@router.get("/horizon-status")
-async def get_horizon_status(
-    db: Session = Depends(get_db),
-    tenant: Tenant = Depends(get_current_tenant),
-):
-    """Returnerer status for siste periodeplan-sjekk for innlogget tenant."""
-    today = today_oslo()
-    last = tenant.last_horizon_check_at
-    return {
-        "last_check_at": last.isoformat() if last else None,
-        "checked_today": bool(last and last.date() == today),
-        "today": today.isoformat(),
-    }
 
 
 def _generate_for_date(db: Session, tenant_id: int, target_date: date, customer_id: Optional[int] = None) -> dict:

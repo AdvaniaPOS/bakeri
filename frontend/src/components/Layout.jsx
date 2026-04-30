@@ -98,11 +98,19 @@ export default function Layout() {
           <div className="w-8 h-8 bg-amber-600 rounded-md flex items-center justify-center shadow-sm">
             <Croissant className="w-4.5 h-4.5 text-white" />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="text-sm font-semibold text-gray-900 truncate" title={tenant?.name || 'Bakeri'}>
               {tenant?.name || 'Bakeri'}
             </h1>
           </div>
+          <button
+            onClick={toggleTheme}
+            className="p-1.5 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60 transition-colors"
+            title={theme === 'dark' ? 'Bytt til lyst tema' : 'Bytt til mørkt tema'}
+            aria-label="Bytt tema"
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
         </div>
 
         {/* Navigation */}
@@ -155,13 +163,6 @@ export default function Layout() {
                 {getRoleDisplay(user?.role)}
               </p>
             </div>
-            <button
-              onClick={toggleTheme}
-              className="p-1 text-gray-400 hover:text-gray-900 hover:bg-white rounded transition-colors"
-              title={theme === 'dark' ? 'Lyst tema' : 'Mørkt tema'}
-            >
-              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            </button>
             <button
               onClick={handleLogout}
               className="p-1 text-gray-400 hover:text-red-600 hover:bg-white rounded transition-colors"
