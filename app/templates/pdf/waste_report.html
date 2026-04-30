@@ -1,0 +1,52 @@
+{% extends "base_a4.html" %}
+{% block title %}Svinnrapport {{ from_date|date_short }} – {{ to_date|date_short }}{% endblock %}
+{% block report_title %}Svinnrapport{% endblock %}
+
+{% block content %}
+<h1>Svinn pr produkt</h1>
+<p class="muted">Periode: {{ from_date|date_no }} – {{ to_date|date_no }}</p>
+
+<div class="summary-row">
+  <div class="pill"><span class="num">{{ total_planned }}</span>Planlagt</div>
+  <div class="pill"><span class="num">{{ total_actual }}</span>Faktisk</div>
+  <div class="pill"><span class="num">{{ total_waste }}</span>Svinn</div>
+  <div class="pill"><span class="num">{{ total_waste_pct }}%</span>Svinn (totalt)</div>
+</div>
+
+{% if not rows %}
+  <p class="muted">Ingen produksjonslogger registrert i perioden.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Produkt</th>
+      <th class="num" style="width: 12%">Planlagt</th>
+      <th class="num" style="width: 12%">Faktisk</th>
+      <th class="num" style="width: 12%">Svinn</th>
+      <th class="num" style="width: 12%">Svinn %</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.product_name }}</td>
+      <td class="num">{{ r.total_planned }}</td>
+      <td class="num">{{ r.total_actual }}</td>
+      <td class="num">{{ r.total_waste }}</td>
+      <td class="num">
+        {% if r.waste_pct >= 10 %}
+          <strong style="color:#b91c1c">{{ r.waste_pct }}%</strong>
+        {% elif r.waste_pct >= 5 %}
+          <strong style="color:#b45309">{{ r.waste_pct }}%</strong>
+        {% else %}
+          {{ r.waste_pct }}%
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<p class="footer-note">Generert {{ generated_at|date_no }}.</p>
+{% endblock %}

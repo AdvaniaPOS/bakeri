@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Calendar, RefreshCw, Save, AlertTriangle, Loader2, TrendingDown } from 'lucide-react';
+import { Calendar, RefreshCw, Save, AlertTriangle, Loader2, TrendingDown, FileText } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { openPdf } from '../utils/pdf';
 
 function formatDateISO(d) {
   const yr = d.getFullYear();
@@ -31,6 +32,11 @@ export default function ProductionLog() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [savedAt, setSavedAt] = useState(null);
+  // Periode for svinn-PDF (default: siste 30 dager)
+  const [pdfFrom, setPdfFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30); return formatDateISO(d);
+  });
+  const [pdfTo, setPdfTo] = useState(todayISO());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,6 +154,31 @@ export default function ProductionLog() {
             Lagre
           </button>
         </div>
+      </div>
+
+      {/* Svinn-PDF for periode */}
+      <div className="bg-white border border-gray-200 rounded-lg p-3 mb-4 flex items-center gap-3 flex-wrap">
+        <FileText className="w-4 h-4 text-gray-500" />
+        <span className="text-sm text-gray-700 font-medium">Svinnrapport (PDF):</span>
+        <input
+          type="date"
+          value={pdfFrom}
+          onChange={(e) => setPdfFrom(e.target.value)}
+          className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+        />
+        <span className="text-gray-400">–</span>
+        <input
+          type="date"
+          value={pdfTo}
+          onChange={(e) => setPdfTo(e.target.value)}
+          className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+        />
+        <button
+          className="btn-secondary text-sm"
+          onClick={() => openPdf(authFetch, `/api/v1/production/pdf/waste?from_date=${pdfFrom}&to_date=${pdfTo}`)}
+        >
+          Last ned
+        </button>
       </div>
 
       {error && (

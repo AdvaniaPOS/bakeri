@@ -12,10 +12,11 @@ Endpoints:
 - PUT  /production/{log_date}            upsert flere rader pa en gang
 - GET  /production/summary/range         aggregert oversikt for periode
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
@@ -26,6 +27,7 @@ from ..auth_models import Tenant, User
 from ..models import (
     ProductionLog, Product, Order, OrderLine, OrderStatus,
 )
+from ..services.pdf import render_pdf, tenant_header_context
 
 router = APIRouter(prefix="/production", tags=["Production"])
 
@@ -316,4 +318,43 @@ async def range_summary(
 
     return ProductionRangeResponse(
         from_date=from_date, to_date=to_date, rows=out,
+    )
+
+
+# ---------------------------------------------------------------------------
+# PDF
+# ---------------------------------------------------------------------------
+
+@router.get("/pdf/waste")
+async def waste_report_pdf(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: Session = Depends(get_db),
+):
+    """Svinnrapport som PDF for valgt periode."""
+    data = await range_summary(from_date=from_date, to_date=to_date, tenant=tenant, db=db)
+
+    total_planned = sum(r.total_planned for r in data.rows)
+    total_actual = sum(r.total_actual for r in data.rows)
+    total_waste = sum(r.total_waste for r in data.rows)
+    total_pct = round((total_waste / total_actual * 100), 1) if total_actual > 0 else 0.0
+
+    ctx = {
+        **tenant_header_context(tenant),
+        "from_date": from_date,
+        "to_date": to_date,
+        "rows": [r.model_dump() for r in data.rows],
+        "total_planned": total_planned,
+        "total_actual": total_actual,
+        "total_waste": total_waste,
+        "total_waste_pct": total_pct,
+        "generated_at": datetime.now(),
+    }
+    pdf = render_pdf("waste_report.html", ctx)
+    filename = f"svinn-{from_date.isoformat()}-{to_date.isoformat()}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
