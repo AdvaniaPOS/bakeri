@@ -222,8 +222,33 @@ async def get_google_maps_route_url(
         if addr:
             addresses.append(addr)
 
+    # Fallback: hvis ingen ordrer for valgt dato, bruk rutens tilordnede kunder
+    # (slik at brukeren kan se kartet for ruten selv om ingen leveringer er
+    # planlagt akkurat den dagen).
+    used_fallback = False
     if not addresses:
-        raise HTTPException(status_code=404, detail="No deliveries on this route")
+        used_fallback = True
+        customers = db.execute(
+            select(Customer).where(
+                Customer.tenant_id == tenant.id,
+                Customer.route_id == route_id,
+                Customer.is_deleted == False,
+                Customer.is_active == True,
+            ).order_by(Customer.name)
+        ).scalars().all()
+        for cust in customers:
+            addr = ", ".join(filter(None, [
+                cust.street_address,
+                f"{cust.postal_code or ''} {cust.city or ''}".strip(),
+            ]))
+            if addr:
+                addresses.append(addr)
+
+    if not addresses:
+        raise HTTPException(
+            status_code=404,
+            detail="Ingen kunder med adresse paa denne ruten. Tilordne kunder med gateadresse forst."
+        )
 
     if len(addresses) == 1:
         url = f"https://www.google.com/maps/search/?api=1&query={quote(addresses[0])}"
@@ -236,7 +261,12 @@ async def get_google_maps_route_url(
             url += f"&waypoints={waypoints}"
         url += "&travelmode=driving"
 
-    return {"url": url, "stops": len(addresses), "route_name": route.name}
+    return {
+        "url": url,
+        "stops": len(addresses),
+        "route_name": route.name,
+        "fallback_used": used_fallback,
+    }
 
 
 @router.get("/delivery-summary/{target_date}")

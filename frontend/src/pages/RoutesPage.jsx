@@ -218,11 +218,17 @@ export default function RoutesPage() {
     const today = new Date().toISOString().split('T')[0];
     try {
       const response = await authFetch(`/api/v1/reports/delivery-list/${selectedRoute.id}/${today}/google-maps-url`);
-      if (!response.ok) throw new Error('Kunne ikke generere Google Maps-lenke');
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Kunne ikke generere Google Maps-lenke');
+      }
       const data = await response.json();
+      if (data.fallback_used) {
+        // Ingen ordrer i dag - viser ruten basert paa kundenes adresser i stedet
+      }
       window.open(data.url, '_blank');
     } catch (err) {
-      setError(err.message);
+      alert(err.message);
     }
   };
 
