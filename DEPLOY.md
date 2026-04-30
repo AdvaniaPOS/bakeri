@@ -261,11 +261,17 @@ Vi har et ferdig backup-script som lager komprimerte daglige dumper og roterer d
 ### 7a. Førstegangs-oppsett
 
 ```bash
+# pg_dump trengs — installer postgresql-client hvis det mangler:
+which pg_dump || sudo apt install -y postgresql-client
+
 chmod +x ~/bakeri/scripts/backup_db.sh ~/bakeri/scripts/restore_db.sh
 mkdir -p ~/backups/daily ~/backups/weekly
 sudo touch /var/log/bakeri-backup.log
 sudo chown poshubadmin:poshubadmin /var/log/bakeri-backup.log
 ```
+
+> Skriptet auto-detekterer `pg_dump` — hvis ikke i `PATH` ser det i
+> `/usr/lib/postgresql/*/bin/`. Du kan også sette `PG_DUMP=/full/sti` som env.
 
 ### 7b. Cron (kjøres som poshubadmin)
 

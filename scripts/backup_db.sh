@@ -16,13 +16,28 @@ DB_USER="${DB_USER:-postgres}"
 PGPASSWORD="${PGPASSWORD:-postgres}"
 export PGPASSWORD
 
+# Auto-detekter pg_dump (Ubuntu legger den ofte i /usr/lib/postgresql/<ver>/bin/
+# i stedet for /usr/bin/ nar bare server-pakken er installert).
+PG_DUMP="${PG_DUMP:-}"
+if [ -z "$PG_DUMP" ]; then
+  if command -v pg_dump >/dev/null 2>&1; then
+    PG_DUMP="$(command -v pg_dump)"
+  else
+    PG_DUMP="$(ls -1 /usr/lib/postgresql/*/bin/pg_dump 2>/dev/null | sort -V | tail -n1 || true)"
+  fi
+fi
+if [ -z "$PG_DUMP" ] || [ ! -x "$PG_DUMP" ]; then
+  echo "FEIL: fant ikke pg_dump. Installer postgresql-client eller sett PG_DUMP-variabelen." >&2
+  exit 1
+fi
+
 mkdir -p "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly"
 
 TS="$(date +%Y%m%d_%H%M%S)"
 DAILY_FILE="$BACKUP_DIR/daily/bakeri_${TS}.sql.gz"
 
-echo "[$(date -Is)] Starter backup -> $DAILY_FILE"
-pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" \
+echo "[$(date -Is)] Starter backup -> $DAILY_FILE (med $PG_DUMP)"
+"$PG_DUMP" -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" \
   --no-owner --clean --if-exists "$DB_NAME" \
   | gzip -9 > "$DAILY_FILE"
 
