@@ -32,6 +32,8 @@ googlemaps>=4.10.0
 reportlab>=4.0.0
 python-barcode>=0.15.0  # For Zebra labels
 Pillow>=10.0.0
+weasyprint>=60.0  # HTML→PDF for rapporter og etiketter
+jinja2>=3.1.0  # Templating for PDF-er
 
 # Date/Time handling
 python-dateutil>=2.8.0

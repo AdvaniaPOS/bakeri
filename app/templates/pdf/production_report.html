@@ -1,0 +1,45 @@
+{% extends "base_a4.html" %}
+{% block title %}Produksjonsrapport {{ target_date|date_short }}{% endblock %}
+{% block report_title %}Produksjonsrapport{% endblock %}
+
+{% block content %}
+<h1>{{ target_date|date_no }}</h1>
+
+<div class="summary-row">
+  <div class="pill"><span class="num">{{ total_orders }}</span>Ordrer</div>
+  <div class="pill"><span class="num">{{ total_customers }}</span>Kunder</div>
+  <div class="pill"><span class="num">{{ total_products }}</span>Produkttyper</div>
+</div>
+
+{% if not products_by_category %}
+  <p class="muted">Ingen produkter å produsere på denne datoen.</p>
+{% endif %}
+
+{% for category, products in products_by_category.items() %}
+<div class="no-break">
+  <h2>{{ category }}</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 6%"></th>
+        <th>Produkt</th>
+        <th class="num" style="width: 18%">Antall</th>
+        <th style="width: 14%">Enhet</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in products %}
+      <tr>
+        <td><span class="checkbox"></span></td>
+        <td>{{ p.product_name }}</td>
+        <td class="num"><strong>{{ p.total_quantity }}</strong></td>
+        <td>{{ p.unit or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+<p class="footer-note">Hak av etter hvert som hver vare er ferdig produsert.</p>
+{% endblock %}

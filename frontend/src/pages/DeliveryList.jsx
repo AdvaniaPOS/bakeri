@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { 
   Calendar, RefreshCw, ChevronLeft, ChevronRight, 
   Truck, MapPin, Phone, Package, CheckCircle, 
-  Navigation, Printer, ExternalLink
+  Navigation, Printer, ExternalLink, Download, Tag
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { openPdf } from '../utils/pdf';
 
 // Day names in Norwegian
 const dayNames = ['Søndag', 'Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag'];
@@ -104,6 +105,25 @@ export default function DeliveryList() {
     window.print();
   };
 
+  const downloadDeliveryListPdf = async () => {
+    if (!selectedRoute) return;
+    try {
+      await openPdf(authFetch, `/api/v1/reports/delivery-list/${selectedRoute.id}/${formatDateISO(selectedDate)}.pdf`);
+    } catch (e) {
+      setError(e.message || 'Klarte ikke åpne PDF');
+    }
+  };
+
+  const downloadLabels = async (size) => {
+    try {
+      const url = `/api/v1/reports/labels/${formatDateISO(selectedDate)}.pdf?size=${size}`
+        + (selectedRoute ? `&route_id=${selectedRoute.id}` : '');
+      await openPdf(authFetch, url);
+    } catch (e) {
+      setError(e.message || 'Klarte ikke åpne etiketter');
+    }
+  };
+
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       {/* Header */}
@@ -112,8 +132,17 @@ export default function DeliveryList() {
           <h1 className="page-title">Kjøreliste</h1>
           <p className="page-subtitle">Oversikt over leveringer per rute</p>
         </div>
-        <div className="flex gap-2 print:hidden">
-          <button onClick={printList} className="btn-secondary" title="Skriv ut">
+        <div className="flex gap-2 flex-wrap print:hidden">
+          <button onClick={downloadDeliveryListPdf} disabled={!selectedRoute} className="btn-primary disabled:opacity-50" title="Pakkeliste pr kunde for ruten">
+            <Download className="w-4 h-4" /> Leveringsliste (PDF)
+          </button>
+          <button onClick={() => downloadLabels('ql570')} className="btn-secondary" title="Brother QL-570 (62mm endeløs)">
+            <Tag className="w-4 h-4" /> Etiketter QL-570
+          </button>
+          <button onClick={() => downloadLabels('zd421')} className="btn-secondary" title="Zebra ZD421 (102×152mm)">
+            <Tag className="w-4 h-4" /> Etiketter ZD421
+          </button>
+          <button onClick={printList} className="btn-secondary" title="Skriv ut nettsiden">
             <Printer className="w-4 h-4" /> Skriv ut
           </button>
           <button onClick={openGoogleMaps} disabled={!selectedRoute} className="btn-primary disabled:opacity-50">

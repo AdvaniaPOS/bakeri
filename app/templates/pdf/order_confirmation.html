@@ -1,0 +1,75 @@
+{% extends "base_a4.html" %}
+{% block title %}Ordrebekreftelse #{{ order.id }}{% endblock %}
+{% block report_title %}Ordrebekreftelse{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: flex-start;">
+  <div>
+    <h1>Ordre #{{ order.id }}</h1>
+    <div class="muted">Levering: {{ order.delivery_date|date_no }}</div>
+  </div>
+  <div style="text-align: right;">
+    <div class="small muted">Status</div>
+    <div style="font-weight: 600;">{{ status_label }}</div>
+  </div>
+</div>
+
+<div style="margin-top: 14pt; padding: 10pt; background: #f9fafb; border-radius: 4pt;">
+  <h3 style="margin-top: 0;">Levering til</h3>
+  <div style="font-weight: 600;">{{ customer.name }}</div>
+  {% if customer.company_name %}<div>{{ customer.company_name }}</div>{% endif %}
+  {% if customer.address %}<div class="muted">{{ customer.address }}</div>{% endif %}
+  {% if customer.phone %}<div class="muted">Tlf {{ customer.phone }}</div>{% endif %}
+  {% if customer.delivery_instructions %}
+  <div style="margin-top: 6pt; padding: 4pt 6pt; background: #fef3c7; border-left: 3px solid #f59e0b;">
+    <strong>Leveringsmerknad:</strong> {{ customer.delivery_instructions }}
+  </div>
+  {% endif %}
+</div>
+
+<h2>Varer</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Produkt</th>
+      <th class="num" style="width: 12%">Antall</th>
+      <th style="width: 10%">Enhet</th>
+      <th class="num" style="width: 14%">À pris</th>
+      <th class="num" style="width: 14%">Beløp</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for line in lines %}
+    <tr>
+      <td>{{ line.product_name }}{% if line.notes %}<br><span class="small muted">{{ line.notes }}</span>{% endif %}</td>
+      <td class="num">{{ line.quantity }}</td>
+      <td>{{ line.unit or '' }}</td>
+      <td class="num">{{ line.unit_price|money }}</td>
+      <td class="num">{{ line.line_amount_excl_vat|money }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table style="margin-top: 10pt; width: 50%; margin-left: auto;">
+  <tr>
+    <td>Sum eks. mva</td>
+    <td class="num">{{ totals.excl_vat|money }}</td>
+  </tr>
+  <tr>
+    <td>Mva</td>
+    <td class="num">{{ totals.vat|money }}</td>
+  </tr>
+  <tr style="font-weight: 600; font-size: 11pt;">
+    <td>Sum inkl. mva</td>
+    <td class="num">{{ totals.incl_vat|money }}</td>
+  </tr>
+</table>
+
+{% if order.notes %}
+<h3>Merknad</h3>
+<p>{{ order.notes }}</p>
+{% endif %}
+
+<p class="footer-note">Ved spørsmål om ordren, ta kontakt med oss på {{ tenant_phone or tenant_email or 'bakeriet' }}.</p>
+{% endblock %}

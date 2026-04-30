@@ -1,0 +1,62 @@
+{# Brother QL-570: 62mm endeløs DK-22205. Bredde = 62mm, høyde = variabel. #}
+{# Vi setter en fast høyde pr etikett (ca 50mm) som passer til 5–8 varer. #}
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<title>Etiketter QL-570</title>
+<style>
+  @page {
+    size: 62mm 100mm;
+    margin: 2mm 3mm;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; margin: 0; color: #000; }
+  .label {
+    page-break-after: always;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    font-size: 8pt;
+    line-height: 1.25;
+  }
+  .label:last-child { page-break-after: auto; }
+  .name { font-size: 11pt; font-weight: 700; margin: 0 0 1mm 0; }
+  .company { font-size: 9pt; font-weight: 600; margin: 0 0 1mm 0; }
+  .addr { font-size: 8.5pt; }
+  .meta { font-size: 7.5pt; color: #444; margin-top: 1mm; }
+  hr { border: none; border-top: 1px dashed #888; margin: 2mm 0; }
+  ul { padding-left: 4mm; margin: 0; }
+  li { margin: 0; padding: 0; }
+  .footer { position: absolute; bottom: 2mm; left: 3mm; right: 3mm; font-size: 7pt; color: #666; display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+
+{% for label in labels %}
+<div class="label">
+  <div class="name">{{ label.customer_name }}</div>
+  {% if label.company_name %}<div class="company">{{ label.company_name }}</div>{% endif %}
+  {% if label.address %}<div class="addr">{{ label.address }}</div>{% endif %}
+  {% if show_phone and label.phone %}<div class="meta">Tlf {{ label.phone }}</div>{% endif %}
+  {% if show_window and label.delivery_window_start %}
+    <div class="meta">Lev: {{ label.delivery_window_start }}{% if label.delivery_window_end %}–{{ label.delivery_window_end }}{% endif %}</div>
+  {% endif %}
+
+  <hr>
+
+  <ul>
+    {% for line in label.lines %}
+    <li>{{ line.quantity }}× {{ line.product_name }}</li>
+    {% endfor %}
+  </ul>
+
+  <div class="footer">
+    <span>{{ label.delivery_date|date_short }}</span>
+    <span>ORD-{{ label.order_id }}</span>
+  </div>
+</div>
+{% endfor %}
+
+</body>
+</html>

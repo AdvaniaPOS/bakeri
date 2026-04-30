@@ -1,0 +1,57 @@
+{% extends "base_a4.html" %}
+{% block title %}Pakkeliste {{ target_date|date_short }}{% endblock %}
+{% block report_title %}Pakkeliste pr kunde{% endblock %}
+
+{% block content %}
+<h1>{{ target_date|date_no }}</h1>
+<p class="muted">{{ customers|length }} kunde{{ '' if customers|length == 1 else 'r' }} · {{ total_items }} varer totalt</p>
+
+{% if not customers %}
+  <p class="muted">Ingen leveringer på denne datoen.</p>
+{% endif %}
+
+{% for c in customers %}
+<div class="no-break" style="margin-top: 14pt; padding: 10pt; border: 1px solid #d1d5db; border-radius: 4pt;">
+  <div style="display: flex; justify-content: space-between; align-items: baseline;">
+    <div>
+      <h3 style="margin: 0;">{{ c.customer_name }}{% if c.company_name %} <span class="muted">— {{ c.company_name }}</span>{% endif %}</h3>
+      {% if c.address %}<div class="small muted">{{ c.address }}</div>{% endif %}
+      {% if c.phone %}<div class="small muted">Tlf {{ c.phone }}</div>{% endif %}
+    </div>
+    <div class="small muted" style="text-align: right;">
+      Ordre #{{ c.order_id }}
+      {% if c.delivery_window_start %}<br>Lev. {{ c.delivery_window_start }}–{{ c.delivery_window_end or '' }}{% endif %}
+    </div>
+  </div>
+
+  {% if c.delivery_instructions %}
+  <div class="small" style="margin-top: 4pt; padding: 4pt 6pt; background: #fef3c7; border-left: 3px solid #f59e0b;">
+    <strong>Merknad:</strong> {{ c.delivery_instructions }}
+  </div>
+  {% endif %}
+
+  <table style="margin-top: 6pt;">
+    <thead>
+      <tr>
+        <th style="width: 6%"></th>
+        <th>Produkt</th>
+        <th class="num" style="width: 14%">Antall</th>
+        <th style="width: 12%">Enhet</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in c.lines %}
+      <tr>
+        <td><span class="checkbox"></span></td>
+        <td>{{ line.product_name }}</td>
+        <td class="num"><strong>{{ line.quantity }}</strong></td>
+        <td>{{ line.unit or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+<p class="footer-note">Hak av etter hvert som varer er pakket.</p>
+{% endblock %}

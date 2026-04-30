@@ -1,0 +1,85 @@
+{# Felles A4-base for alle bakeri-rapporter #}
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}Rapport{% endblock %}</title>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 18mm 14mm 18mm 14mm;
+    @bottom-center {
+      content: "Side " counter(page) " av " counter(pages);
+      font-size: 8pt;
+      color: #888;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 10pt;
+    color: #1f2937;
+    margin: 0;
+    line-height: 1.4;
+  }
+  h1 { font-size: 18pt; margin: 0 0 4pt 0; color: {{ primary_color }}; }
+  h2 { font-size: 13pt; margin: 14pt 0 6pt 0; color: #374151; border-bottom: 1px solid #e5e7eb; padding-bottom: 3pt; }
+  h3 { font-size: 11pt; margin: 10pt 0 4pt 0; color: #4b5563; }
+  .muted { color: #6b7280; font-size: 9pt; }
+  .small { font-size: 8.5pt; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6pt; }
+  th, td { padding: 5pt 6pt; text-align: left; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  th { background: #f9fafb; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
+  td.num, th.num { text-align: right; }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2px solid {{ primary_color }};
+    padding-bottom: 8pt;
+    margin-bottom: 12pt;
+  }
+  .header .left .name { font-size: 14pt; font-weight: 600; color: #111827; }
+  .header .right { text-align: right; font-size: 9pt; color: #4b5563; }
+  .summary-row {
+    display: flex;
+    gap: 16pt;
+    margin: 8pt 0 12pt 0;
+    padding: 8pt 12pt;
+    background: #f3f4f6;
+    border-radius: 4pt;
+  }
+  .summary-row .pill { font-size: 9pt; }
+  .summary-row .pill .num { font-size: 14pt; font-weight: 600; color: #111827; display: block; }
+  .checkbox { display: inline-block; width: 10pt; height: 10pt; border: 1px solid #6b7280; margin-right: 4pt; vertical-align: middle; }
+  .footer-note { margin-top: 16pt; font-size: 8pt; color: #9ca3af; }
+  .page-break { page-break-after: always; }
+  .no-break { page-break-inside: avoid; }
+</style>
+{% block extra_styles %}{% endblock %}
+</head>
+<body>
+
+<div class="header">
+  <div class="left">
+    <div class="name">{{ tenant_name }}</div>
+    {% if tenant_address %}<div class="muted">{{ tenant_address }}</div>{% endif %}
+    {% if tenant_phone or tenant_email %}
+      <div class="muted">
+        {% if tenant_phone %}Tlf {{ tenant_phone }}{% endif %}
+        {% if tenant_phone and tenant_email %} · {% endif %}
+        {% if tenant_email %}{{ tenant_email }}{% endif %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="right">
+    <div><strong>{% block report_title %}Rapport{% endblock %}</strong></div>
+    {% if subtitle %}<div class="muted">{{ subtitle }}</div>{% endif %}
+    <div class="muted">Generert {{ generated_at|date_short }}</div>
+  </div>
+</div>
+
+{% block content %}{% endblock %}
+
+</body>
+</html>

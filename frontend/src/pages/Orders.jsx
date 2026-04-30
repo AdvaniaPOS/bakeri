@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, Plus, Eye, Edit2, Trash2, Truck, Clock, CheckCircle, XCircle, RefreshCw, Send, Loader2, X, Check, AlertTriangle, FileText, EyeOff, Undo2 } from 'lucide-react';
+import { Search, Filter, Plus, Eye, Edit2, Trash2, Truck, Clock, CheckCircle, XCircle, RefreshCw, Send, Loader2, X, Check, AlertTriangle, FileText, EyeOff, Undo2, Download } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const statusConfig = {
@@ -511,6 +511,18 @@ export default function Orders() {
                           </button>
                           <button onClick={() => setEditingOrderId(order.id)} className="p-1.5 text-gray-400 hover:text-amber-700 hover:bg-amber-50 rounded" title="Rediger">
                             <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const { openPdf } = await import('../utils/pdf');
+                                await openPdf(authFetch, `/api/v1/reports/order/${order.id}/confirmation.pdf`);
+                              } catch (e) { setError(e.message || 'Kunne ikke åpne PDF'); }
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-blue-700 hover:bg-blue-50 rounded"
+                            title="Ordrebekreftelse (PDF)"
+                          >
+                            <Download className="w-3.5 h-3.5" />
                           </button>
                           {visibilityFilter === 'hidden' ? (
                             <button

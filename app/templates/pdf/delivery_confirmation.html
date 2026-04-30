@@ -1,0 +1,52 @@
+{% extends "base_a4.html" %}
+{% block title %}Leveringsbekreftelse #{{ order.id }}{% endblock %}
+{% block report_title %}Leveringsbekreftelse{% endblock %}
+
+{% block content %}
+<h1>Ordre #{{ order.id }}</h1>
+<div class="muted">Levert: {{ order.delivery_date|date_no }}</div>
+
+<div style="margin-top: 14pt; padding: 10pt; background: #ecfdf5; border-left: 4px solid #10b981; border-radius: 4pt;">
+  <h3 style="margin-top: 0;">Mottaker</h3>
+  <div style="font-weight: 600;">{{ customer.name }}</div>
+  {% if customer.company_name %}<div>{{ customer.company_name }}</div>{% endif %}
+  {% if customer.address %}<div class="muted">{{ customer.address }}</div>{% endif %}
+</div>
+
+<h2>Levert</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 6%"></th>
+      <th>Produkt</th>
+      <th class="num" style="width: 14%">Antall</th>
+      <th style="width: 12%">Enhet</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for line in lines %}
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td>{{ line.product_name }}</td>
+      <td class="num">{{ line.quantity }}</td>
+      <td>{{ line.unit or '' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div style="margin-top: 30pt; display: flex; gap: 30pt;">
+  <div style="flex: 1;">
+    <div style="border-top: 1px solid #6b7280; padding-top: 4pt;">
+      <div class="small muted">Mottatt av (signatur)</div>
+    </div>
+  </div>
+  <div style="flex: 1;">
+    <div style="border-top: 1px solid #6b7280; padding-top: 4pt;">
+      <div class="small muted">Dato / klokkeslett</div>
+    </div>
+  </div>
+</div>
+
+<p class="footer-note">Takk for at du handler hos {{ tenant_name }}.</p>
+{% endblock %}

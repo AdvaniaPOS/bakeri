@@ -7,6 +7,7 @@ from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -15,6 +16,26 @@ from ..dependencies import get_current_tenant
 from ..auth_models import Tenant
 from ..models import Order, OrderLine, Customer, Product, Route, OrderStatus
 from ..tenant_scope import get_or_404
+from ..services.pdf import render_pdf, tenant_header_context
+
+
+def _pdf_response(pdf_bytes: bytes, filename: str) -> Response:
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+def _status_label(status: OrderStatus) -> str:
+    return {
+        OrderStatus.DRAFT: "Utkast",
+        OrderStatus.CONFIRMED: "Bekreftet",
+        OrderStatus.READY_FOR_DELIVERY: "Klar for levering",
+        OrderStatus.IN_TRANSIT: "Under levering",
+        OrderStatus.DELIVERED: "Levert",
+        OrderStatus.CANCELLED: "Kansellert",
+    }.get(status, str(status))
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -361,3 +382,305 @@ async def get_customer_order_history(
         }
         for o in orders
     ]
+
+
+# === PDF endepunkter ===
+
+
+def _build_packing_list_data(tenant_id: int, target_date: date, db: Session) -> dict:
+    """Henter alle ordre for dato gruppert pr kunde — for pakkeliste og etiketter."""
+    orders = db.execute(_active_orders_query(tenant_id, target_date)).scalars().all()
+    customers = []
+    total_items = 0
+    for order in sorted(orders, key=lambda o: (o.customer.name if o.customer else "")):
+        cust = order.customer
+        if not cust:
+            continue
+        addr = ", ".join(filter(None, [
+            cust.street_address,
+            f"{cust.postal_code or ''} {cust.city or ''}".strip(),
+        ]))
+        lines = [
+            {
+                "product_name": line.product.name if line.product else "?",
+                "quantity": line.quantity,
+                "unit": line.product.unit if line.product else "",
+            }
+            for line in order.lines
+        ]
+        items_count = sum(l["quantity"] for l in lines)
+        total_items += items_count
+        customers.append({
+            "customer_name": cust.name,
+            "company_name": cust.company_name,
+            "address": addr,
+            "phone": cust.phone,
+            "order_id": order.id,
+            "delivery_date": order.delivery_date,
+            "delivery_window_start": cust.delivery_window_start.isoformat() if cust.delivery_window_start else None,
+            "delivery_window_end": cust.delivery_window_end.isoformat() if cust.delivery_window_end else None,
+            "delivery_instructions": cust.delivery_instructions,
+            "lines": lines,
+        })
+    return {"customers": customers, "total_items": total_items}
+
+
+@router.get("/production/{target_date}.pdf")
+async def production_report_pdf(
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    data = await get_production_report(target_date, db, tenant)
+    ctx = {
+        **tenant_header_context(tenant),
+        "target_date": target_date,
+        "total_orders": data["total_orders"],
+        "total_customers": data["total_customers"],
+        "total_products": data["total_products"],
+        "products_by_category": data["products_by_category"],
+    }
+    pdf = render_pdf("production_report.html", ctx)
+    return _pdf_response(pdf, f"produksjon-{target_date.isoformat()}.pdf")
+
+
+@router.get("/packing-list/{target_date}.pdf")
+async def packing_list_pdf(
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    data = _build_packing_list_data(tenant.id, target_date, db)
+    ctx = {
+        **tenant_header_context(tenant),
+        "target_date": target_date,
+        **data,
+    }
+    pdf = render_pdf("packing_list.html", ctx)
+    return _pdf_response(pdf, f"pakkeliste-{target_date.isoformat()}.pdf")
+
+
+@router.get("/order/{order_id}/confirmation.pdf")
+async def order_confirmation_pdf(
+    order_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    order = db.execute(
+        select(Order)
+        .where(Order.id == order_id, Order.tenant_id == tenant.id)
+        .options(
+            selectinload(Order.customer),
+            selectinload(Order.lines).selectinload(OrderLine.product),
+        )
+    ).scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    cust = order.customer
+    lines = [
+        {
+            "product_name": l.product.name if l.product else "?",
+            "quantity": l.quantity,
+            "unit": l.product.unit if l.product else "",
+            "unit_price": float(l.unit_price or 0),
+            "line_amount_excl_vat": float((l.unit_price or 0) * l.quantity),
+            "notes": l.notes,
+        }
+        for l in order.lines
+    ]
+    ctx = {
+        **tenant_header_context(tenant),
+        "order": {
+            "id": order.id,
+            "delivery_date": order.delivery_date,
+            "notes": order.notes,
+        },
+        "status_label": _status_label(order.status),
+        "customer": {
+            "name": cust.name if cust else "",
+            "company_name": cust.company_name if cust else None,
+            "address": ", ".join(filter(None, [
+                cust.street_address if cust else None,
+                f"{cust.postal_code or ''} {cust.city or ''}".strip() if cust else None,
+            ])),
+            "phone": cust.phone if cust else None,
+            "delivery_instructions": cust.delivery_instructions if cust else None,
+        },
+        "lines": lines,
+        "totals": {
+            "excl_vat": float(order.total_amount_excl_vat or 0),
+            "vat": float(order.total_vat or 0),
+            "incl_vat": float(order.total_amount_incl_vat or 0),
+        },
+    }
+    pdf = render_pdf("order_confirmation.html", ctx)
+    return _pdf_response(pdf, f"ordre-{order.id}-bekreftelse.pdf")
+
+
+@router.get("/order/{order_id}/delivery.pdf")
+async def delivery_confirmation_pdf(
+    order_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    order = db.execute(
+        select(Order)
+        .where(Order.id == order_id, Order.tenant_id == tenant.id)
+        .options(
+            selectinload(Order.customer),
+            selectinload(Order.lines).selectinload(OrderLine.product),
+        )
+    ).scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    cust = order.customer
+    ctx = {
+        **tenant_header_context(tenant),
+        "order": {"id": order.id, "delivery_date": order.delivery_date},
+        "customer": {
+            "name": cust.name if cust else "",
+            "company_name": cust.company_name if cust else None,
+            "address": ", ".join(filter(None, [
+                cust.street_address if cust else None,
+                f"{cust.postal_code or ''} {cust.city or ''}".strip() if cust else None,
+            ])),
+        },
+        "lines": [
+            {
+                "product_name": l.product.name if l.product else "?",
+                "quantity": l.quantity,
+                "unit": l.product.unit if l.product else "",
+            }
+            for l in order.lines
+        ],
+    }
+    pdf = render_pdf("delivery_confirmation.html", ctx)
+    return _pdf_response(pdf, f"ordre-{order.id}-leveringsbekreftelse.pdf")
+
+
+@router.get("/delivery-list/{route_id}/{target_date}.pdf")
+async def delivery_list_pdf(
+    route_id: int,
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Pakkeliste pr kunde for én rute på én dato."""
+    route = get_or_404(db, Route, route_id, tenant.id, "Route not found")
+
+    orders = db.execute(
+        _active_orders_query(tenant.id, target_date)
+        .join(Customer, Customer.id == Order.customer_id)
+        .where(Customer.route_id == route_id)
+    ).scalars().all()
+
+    customers = []
+    total_items = 0
+    for order in sorted(orders, key=lambda o: (o.route_position or 9999, o.customer.name if o.customer else "")):
+        cust = order.customer
+        if not cust:
+            continue
+        addr = ", ".join(filter(None, [
+            cust.street_address,
+            f"{cust.postal_code or ''} {cust.city or ''}".strip(),
+        ]))
+        lines = [
+            {
+                "product_name": line.product.name if line.product else "?",
+                "quantity": line.quantity,
+                "unit": line.product.unit if line.product else "",
+            }
+            for line in order.lines
+        ]
+        total_items += sum(l["quantity"] for l in lines)
+        customers.append({
+            "customer_name": cust.name,
+            "company_name": cust.company_name,
+            "address": addr,
+            "phone": cust.phone,
+            "order_id": order.id,
+            "delivery_date": order.delivery_date,
+            "delivery_window_start": cust.delivery_window_start.isoformat() if cust.delivery_window_start else None,
+            "delivery_window_end": cust.delivery_window_end.isoformat() if cust.delivery_window_end else None,
+            "delivery_instructions": cust.delivery_instructions,
+            "lines": lines,
+        })
+
+    ctx = {
+        **tenant_header_context(tenant),
+        "target_date": target_date,
+        "customers": customers,
+        "total_items": total_items,
+        "subtitle": f"Rute: {route.name}",
+    }
+    pdf = render_pdf("packing_list.html", ctx)
+    return _pdf_response(pdf, f"leveringsliste-{route.name}-{target_date.isoformat()}.pdf")
+
+
+@router.get("/labels/{target_date}.pdf")
+async def labels_pdf(
+    target_date: date,
+    size: str = "ql570",
+    route_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """
+    Etiketter for alle leveringer på en dato.
+    `size`: 'ql570' (Brother 62mm endeløs) eller 'zd421' (Zebra 102×152mm).
+    Valgfritt `route_id` for å begrense til én rute.
+    """
+    if size not in ("ql570", "zd421"):
+        raise HTTPException(status_code=400, detail="size must be 'ql570' or 'zd421'")
+
+    query = _active_orders_query(tenant.id, target_date)
+    if route_id is not None:
+        get_or_404(db, Route, route_id, tenant.id, "Route not found")
+        query = query.join(Customer, Customer.id == Order.customer_id).where(Customer.route_id == route_id)
+
+    orders = db.execute(query).scalars().all()
+
+    labels = []
+    for order in sorted(orders, key=lambda o: (o.route_position or 9999, o.customer.name if o.customer else "")):
+        cust = order.customer
+        if not cust:
+            continue
+        addr = ", ".join(filter(None, [
+            cust.street_address,
+            f"{cust.postal_code or ''} {cust.city or ''}".strip(),
+        ]))
+        labels.append({
+            "customer_name": cust.name,
+            "company_name": cust.company_name,
+            "address": addr,
+            "phone": cust.phone,
+            "delivery_window_start": cust.delivery_window_start.isoformat() if cust.delivery_window_start else None,
+            "delivery_window_end": cust.delivery_window_end.isoformat() if cust.delivery_window_end else None,
+            "delivery_instructions": cust.delivery_instructions,
+            "order_id": order.id,
+            "delivery_date": order.delivery_date,
+            "lines": [
+                {
+                    "product_name": line.product.name if line.product else "?",
+                    "quantity": line.quantity,
+                    "unit": line.product.unit if line.product else "",
+                }
+                for line in order.lines
+            ],
+        })
+
+    if not labels:
+        raise HTTPException(status_code=404, detail="Ingen leveringer på denne datoen")
+
+    settings = tenant.settings or {}
+    ctx = {
+        "labels": labels,
+        "show_phone": bool(settings.get("labels_show_phone", True)),
+        "show_window": bool(settings.get("labels_show_delivery_window", True)),
+    }
+    template_name = "labels_ql570.html" if size == "ql570" else "labels_zd421.html"
+    pdf = render_pdf(template_name, ctx)
+    return _pdf_response(pdf, f"etiketter-{size}-{target_date.isoformat()}.pdf")
+

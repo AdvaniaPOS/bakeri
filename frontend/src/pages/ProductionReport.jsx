@@ -4,6 +4,7 @@ import {
   Package, ClipboardList, Printer, Download, Users 
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { openPdf } from '../utils/pdf';
 
 // Day names in Norwegian
 const dayNames = ['Søndag', 'Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag'];
@@ -19,14 +20,53 @@ const formatDateISO = (date) => {
   return d.toISOString().split('T')[0];
 };
 
+// Beregn standard-dato basert på tenant-innstilling.
+// Verdier: "today" | "tomorrow" | heltall (offset i dager).
+function resolveDefaultDate(setting) {
+  const d = new Date();
+  if (setting === undefined || setting === null || setting === 'today') return d;
+  if (setting === 'tomorrow') {
+    d.setDate(d.getDate() + 1);
+    return d;
+  }
+  const offset = parseInt(setting, 10);
+  if (!Number.isNaN(offset)) {
+    d.setDate(d.getDate() + offset);
+  }
+  return d;
+}
+
 export default function ProductionReport() {
   const { authFetch } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [defaultDateLoaded, setDefaultDateLoaded] = useState(false);
   const [report, setReport] = useState(null);
   const [weekOverview, setWeekOverview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [view, setView] = useState('day'); // 'day' or 'week'
+
+  // Hent default-dato fra tenant-settings én gang ved mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await authFetch('/api/v1/admin/settings');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const setting = data?.production_report_default_day?.value ?? 'today';
+        if (!cancelled) {
+          setSelectedDate(resolveDefaultDate(setting));
+        }
+      } catch {
+        // ignore — beholder dagens dato som fallback
+      } finally {
+        if (!cancelled) setDefaultDateLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchDailyReport = async () => {
     setLoading(true);
@@ -67,12 +107,13 @@ export default function ProductionReport() {
   };
 
   useEffect(() => {
+    if (!defaultDateLoaded) return; // vent til default-dato er hentet
     if (view === 'day') {
       fetchDailyReport();
     } else {
       fetchWeekOverview();
     }
-  }, [selectedDate, view]);
+  }, [selectedDate, view, defaultDateLoaded]);
 
   const changeDate = (days) => {
     const newDate = new Date(selectedDate);
@@ -86,6 +127,22 @@ export default function ProductionReport() {
 
   const printReport = () => {
     window.print();
+  };
+
+  const downloadProductionPdf = async () => {
+    try {
+      await openPdf(authFetch, `/api/v1/reports/production/${formatDateISO(selectedDate)}.pdf`);
+    } catch (e) {
+      setError(e.message || 'Klarte ikke åpne PDF');
+    }
+  };
+
+  const downloadPackingListPdf = async () => {
+    try {
+      await openPdf(authFetch, `/api/v1/reports/packing-list/${formatDateISO(selectedDate)}.pdf`);
+    } catch (e) {
+      setError(e.message || 'Klarte ikke åpne PDF');
+    }
   };
 
   if (loading) {
@@ -105,8 +162,14 @@ export default function ProductionReport() {
           <h1 className="page-title">Produksjonsrapport</h1>
           <p className="page-subtitle">Oversikt over produksjonsbehov</p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={printReport} className="btn-secondary" title="Skriv ut">
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={downloadProductionPdf} className="btn-primary" title="Produksjonsrapport som PDF">
+            <Download className="w-4 h-4" /> Produksjon (PDF)
+          </button>
+          <button onClick={downloadPackingListPdf} className="btn-secondary" title="Pakkeliste pr kunde som PDF">
+            <Download className="w-4 h-4" /> Pakkeliste (PDF)
+          </button>
+          <button onClick={printReport} className="btn-secondary" title="Skriv ut nettsiden">
             <Printer className="w-4 h-4" /> Skriv ut
           </button>
           <button onClick={() => view === 'day' ? fetchDailyReport() : fetchWeekOverview()} className="btn-secondary" title="Oppdater">

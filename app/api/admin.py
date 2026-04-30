@@ -695,6 +695,120 @@ async def update_susoft_config(
 
 
 # =============================================================================
+# TENANT-WIDE SETTINGS (lagret som JSON i Tenant.settings)
+# =============================================================================
+
+# Whitelist over tillatte settings-nøkler. Verdier valideres pr nøkkel.
+_ALLOWED_SETTINGS = {
+    # Produksjonsrapport: hvilken dato skal vises som standard?
+    # Verdier: "today" | "tomorrow" | int (offset i dager, -7..30)
+    "production_report_default_day": {
+        "type": "string_or_int",
+        "default": "today",
+        "description": "Standardvalg for produksjonsrapportens dato",
+    },
+    # Default leveringsadresse-info som vises på etiketter/utskrift
+    "labels_show_phone": {"type": "bool", "default": True, "description": "Vis kundens telefon på etiketter"},
+    "labels_show_delivery_window": {"type": "bool", "default": True, "description": "Vis leveringsvindu på etiketter"},
+    # PDF-header tekst (overstyrer tenant.name hvis satt)
+    "pdf_header_subtitle": {"type": "string", "default": "", "description": "Undertittel som vises i PDF-headeren"},
+}
+
+
+def _validate_setting(key: str, value):
+    spec = _ALLOWED_SETTINGS.get(key)
+    if spec is None:
+        raise HTTPException(status_code=400, detail=f"Ukjent innstilling: {key}")
+    t = spec["type"]
+    if t == "bool" and not isinstance(value, bool):
+        raise HTTPException(status_code=400, detail=f"{key} må være true/false")
+    if t == "string" and not isinstance(value, (str, type(None))):
+        raise HTTPException(status_code=400, detail=f"{key} må være tekst")
+    if t == "string_or_int":
+        if isinstance(value, int):
+            if value < -7 or value > 30:
+                raise HTTPException(status_code=400, detail=f"{key} må være -7..30")
+        elif isinstance(value, str):
+            if value not in ("today", "tomorrow") and not value.lstrip("-").isdigit():
+                raise HTTPException(status_code=400, detail=f"{key} må være 'today', 'tomorrow' eller heltall")
+        else:
+            raise HTTPException(status_code=400, detail=f"{key} må være tekst eller heltall")
+    return value
+
+
+@router.get("/settings")
+async def get_tenant_settings(
+    tenant: Tenant = Depends(get_current_tenant),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER)),
+):
+    """Hent alle tenant-innstillinger. Returnerer defaults for nøkler som ikke er satt."""
+    current = tenant.settings or {}
+    out = {}
+    for key, spec in _ALLOWED_SETTINGS.items():
+        out[key] = {
+            "value": current.get(key, spec["default"]),
+            "default": spec["default"],
+            "description": spec["description"],
+        }
+    return out
+
+
+@router.put("/settings")
+async def update_tenant_settings(
+    payload: dict,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
+):
+    """
+    Oppdater én eller flere tenant-innstillinger.
+
+    Body: `{"key1": value1, "key2": value2, ...}` — kun nøkler i whitelist tillates.
+    """
+    if not isinstance(payload, dict) or not payload:
+        raise HTTPException(status_code=400, detail="Body må være et JSON-objekt med minst én innstilling")
+
+    new_settings = dict(tenant.settings or {})
+    for key, value in payload.items():
+        _validate_setting(key, value)
+        new_settings[key] = value
+
+    tenant.settings = new_settings
+    # SQLAlchemy detekterer ikke alltid endringer i mutable JSON — flagger eksplisitt.
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(tenant, "settings")
+    db.commit()
+    db.refresh(tenant)
+    return {"updated_keys": list(payload.keys()), "settings": tenant.settings}
+
+
+# =============================================================================
+# PERIODEPLAN-HORISONT: manuell trigger fra UI
+# =============================================================================
+
+@router.post("/horizon/trigger")
+async def trigger_horizon_now(
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER)),
+):
+    """
+    Trigg manuell ordre-generering for innlogget tenant.
+    Med `force=true` ignoreres "allerede sjekket i dag"-stempelet.
+    """
+    from .orders import _run_ensure_horizon
+
+    if force:
+        tenant.last_horizon_check_at = None
+        db.commit()
+
+    background_tasks.add_task(_run_ensure_horizon, tenant.id)
+    return {"status": "scheduled", "tenant_id": tenant.id, "force": force}
+
+
+# =============================================================================
 # SUPER-ADMIN: Tenant management (kunder/portaler)
 # =============================================================================
 

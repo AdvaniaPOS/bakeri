@@ -174,6 +174,67 @@ sudo systemctl restart bakeri-backend
 sudo systemctl reload nginx
 ```
 
+## 5b. PDF-rapporter (WeasyPrint)
+
+Backend bruker WeasyPrint for å generere PDF-er (produksjonsrapport,
+pakkeliste, ordrebekreftelse, leveringsbekreftelse, etiketter).
+WeasyPrint krever noen system-libs:
+
+```bash
+sudo apt install -y \
+  libpango-1.0-0 libpangoft2-1.0-0 \
+  libcairo2 libgdk-pixbuf-2.0-0 \
+  libffi-dev shared-mime-info fonts-dejavu-core
+```
+
+Etter dette må backend startes på nytt: `sudo systemctl restart bakeri-backend`.
+
+Test at det fungerer:
+
+```bash
+curl -I -H "Authorization: Bearer <token>" \
+  http://127.0.0.1:8001/api/v1/reports/production/$(date +%F).pdf
+# Forventet: Content-Type: application/pdf
+```
+
+## 5c. Daglig auto-generering av ordre (cron)
+
+Backend genererer planlagte ordre automatisk når noen logger inn (idempotent
+pr dag). For å sikre at det også skjer når ingen logger inn tidlig om
+morgenen, legg til en cron-jobb:
+
+```bash
+sudo crontab -e -u poshubadmin
+```
+
+Legg til:
+
+```cron
+# Lampeland Bakeri – generer ordre kl 02:05 hver natt
+5 2 * * * cd /home/poshubadmin/bakeri && /home/poshubadmin/bakeri/.venv/bin/python -m scripts.generate_orders --force >> /var/log/bakeri-generate.log 2>&1
+```
+
+Sørg for at loggfilen kan skrives:
+
+```bash
+sudo touch /var/log/bakeri-generate.log
+sudo chown poshubadmin:poshubadmin /var/log/bakeri-generate.log
+```
+
+Manuell kjøring (test):
+
+```bash
+cd ~/bakeri
+.venv/bin/python -m scripts.generate_orders --force
+```
+
+Eller via API (krever MANAGER+ token):
+
+```bash
+curl -X POST -H "Authorization: Bearer <token>" \
+  "http://127.0.0.1:8001/api/v1/admin/horizon/trigger?force=true"
+```
+
 ## 6. Logger og feilsøking
 
 ```bash

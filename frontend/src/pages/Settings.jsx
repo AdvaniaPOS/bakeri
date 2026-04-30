@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package } from 'lucide-react';
+import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Settings() {
@@ -23,6 +23,16 @@ export default function Settings() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [configMessage, setConfigMessage] = useState(null);
 
+  // Tenant settings (bakeri-defaults)
+  const [tenantSettings, setTenantSettings] = useState({});
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState(null);
+
+  // Periodeplan-horisont
+  const [horizonStatus, setHorizonStatus] = useState(null);
+  const [triggeringHorizon, setTriggeringHorizon] = useState(false);
+  const [horizonMessage, setHorizonMessage] = useState(null);
+
   // Last inn konfig ved mount
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +55,82 @@ export default function Settings() {
     return () => { cancelled = true; };
   }, [authFetch]);
 
-  const saveConfig = async () => {
+  // Last inn tenant-settings + horizon-status
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [sResp, hResp] = await Promise.all([
+          authFetch('/api/v1/admin/settings'),
+          authFetch('/api/v1/orders/horizon-status'),
+        ]);
+        if (!cancelled && sResp.ok) {
+          setTenantSettings(await sResp.json());
+        }
+        if (!cancelled && hResp.ok) {
+          setHorizonStatus(await hResp.json());
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authFetch]);
+
+  const updateSetting = (key, value) => {
+    setTenantSettings(s => ({
+      ...s,
+      [key]: { ...(s[key] || {}), value },
+    }));
+  };
+
+  const saveTenantSettings = async () => {
+    setSavingSettings(true);
+    setSettingsMessage(null);
+    try {
+      const payload = {};
+      Object.entries(tenantSettings).forEach(([k, v]) => {
+        payload[k] = v.value;
+      });
+      const resp = await authFetch('/api/v1/admin/settings', { method: 'PUT', body: payload });
+      const data = await resp.json();
+      if (resp.ok) {
+        setSettingsMessage({ success: true, message: 'Innstillinger lagret' });
+      } else {
+        setSettingsMessage({ success: false, message: data.detail || 'Kunne ikke lagre' });
+      }
+    } catch (e) {
+      setSettingsMessage({ success: false, message: e.message });
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const triggerHorizon = async (force = false) => {
+    setTriggeringHorizon(true);
+    setHorizonMessage(null);
+    try {
+      const url = `/api/v1/admin/horizon/trigger${force ? '?force=true' : ''}`;
+      const resp = await authFetch(url, { method: 'POST' });
+      const data = await resp.json();
+      if (resp.ok) {
+        setHorizonMessage({ success: true, message: force ? 'Tving-generering startet i bakgrunnen' : 'Generering startet i bakgrunnen' });
+        // Refresh status after a delay
+        setTimeout(async () => {
+          try {
+            const r = await authFetch('/api/v1/orders/horizon-status');
+            if (r.ok) setHorizonStatus(await r.json());
+          } catch { /* ignore */ }
+        }, 4000);
+      } else {
+        setHorizonMessage({ success: false, message: data.detail || 'Kunne ikke trigge' });
+      }
+    } catch (e) {
+      setHorizonMessage({ success: false, message: e.message });
+    } finally {
+      setTriggeringHorizon(false);
+    }
+  };
     setSavingConfig(true);
     setConfigMessage(null);
     try {
@@ -286,6 +371,154 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Bakeri-innstillinger */}
+        <div className="card">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+              <Calendar className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-gray-900">Bakeri-innstillinger</h2>
+              <p className="text-sm text-gray-500">Standardvalg for rapporter og utskrifter</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Standardvisning for produksjonsrapport
+              </label>
+              <select
+                className="input"
+                value={String(tenantSettings.production_report_default_day?.value ?? 'today')}
+                onChange={e => updateSetting('production_report_default_day', e.target.value)}
+              >
+                <option value="today">I dag</option>
+                <option value="tomorrow">I morgen</option>
+                <option value="2">Om 2 dager</option>
+                <option value="3">Om 3 dager</option>
+                <option value="7">Om 7 dager</option>
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                Hvilken dato produksjonsrapporten åpner på som standard. Ofte tas rapporten ut på ettermiddagen for morgendagens produksjon.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                  checked={!!(tenantSettings.labels_show_phone?.value ?? true)}
+                  onChange={e => updateSetting('labels_show_phone', e.target.checked)}
+                />
+                <span className="text-sm text-gray-700">Vis telefon på etiketter</span>
+              </label>
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                  checked={!!(tenantSettings.labels_show_delivery_window?.value ?? true)}
+                  onChange={e => updateSetting('labels_show_delivery_window', e.target.checked)}
+                />
+                <span className="text-sm text-gray-700">Vis leveringsvindu på etiketter</span>
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Undertittel på PDF-rapporter (valgfritt)
+              </label>
+              <input
+                type="text"
+                className="input"
+                placeholder="F.eks. 'Daglig produksjon'"
+                value={tenantSettings.pdf_header_subtitle?.value ?? ''}
+                onChange={e => updateSetting('pdf_header_subtitle', e.target.value)}
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <div className="text-sm">
+                {settingsMessage && (
+                  <span className={settingsMessage.success ? 'text-green-600' : 'text-red-600'}>
+                    {settingsMessage.success ? '✓ ' : '✗ '}{settingsMessage.message}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={saveTenantSettings}
+                disabled={savingSettings}
+                className="btn-primary text-sm flex items-center gap-2"
+              >
+                <Save className="w-4 h-4" />
+                {savingSettings ? 'Lagrer…' : 'Lagre innstillinger'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Periodeplan-horisont */}
+        <div className="card">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 bg-teal-100 rounded-lg flex items-center justify-center">
+              <PlayCircle className="w-5 h-5 text-teal-600" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-gray-900">Periodeplan / ordre-generering</h2>
+              <p className="text-sm text-gray-500">Generer fremtidige ordre fra aktive maler</p>
+            </div>
+          </div>
+
+          <div className="p-4 bg-gray-50 rounded-lg mb-4">
+            <div className="text-sm text-gray-700">
+              <strong>Sist sjekket:</strong>{' '}
+              {horizonStatus?.last_check_at
+                ? new Date(horizonStatus.last_check_at).toLocaleString('nb-NO')
+                : 'Aldri'}
+            </div>
+            <div className="text-sm text-gray-700 mt-1">
+              <strong>Sjekket i dag:</strong>{' '}
+              {horizonStatus?.checked_today ? (
+                <span className="text-green-600">Ja ✓</span>
+              ) : (
+                <span className="text-amber-600">Nei</span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Daglig kjøring skjer via cron (eller ved innlogging). «Tving generering» nullstiller stempelet og kjører på nytt.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="text-sm">
+              {horizonMessage && (
+                <span className={horizonMessage.success ? 'text-green-600' : 'text-red-600'}>
+                  {horizonMessage.success ? '✓ ' : '✗ '}{horizonMessage.message}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => triggerHorizon(false)}
+                disabled={triggeringHorizon}
+                className="btn-secondary text-sm flex items-center gap-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${triggeringHorizon ? 'animate-spin' : ''}`} />
+                Generer manglende ordre
+              </button>
+              <button
+                onClick={() => triggerHorizon(true)}
+                disabled={triggeringHorizon}
+                className="btn-primary text-sm flex items-center gap-2"
+              >
+                <PlayCircle className="w-4 h-4" />
+                Tving generering
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Order Settings */}
         <div className="card">
           <div className="flex items-center gap-3 mb-6">
@@ -297,17 +530,7 @@ export default function Settings() {
               <p className="text-sm text-gray-500">Konfigurer tidsfrister for bestillinger</p>
             </div>
           </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Bestillingsfrist (tid)</label>
-              <input type="time" defaultValue="15:00" className="input" />
-              <p className="text-xs text-gray-400 mt-1">Siste tidspunkt for bestillinger neste dag</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Dager før levering</label>
-              <input type="number" defaultValue="1" min="1" max="7" className="input" />
-              <p className="text-xs text-gray-400 mt-1">Antall dager før levering bestilling må være inne</p>
+
             </div>
           </div>
         </div>
