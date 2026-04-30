@@ -15,6 +15,7 @@ import {
   MapPin,
   Building2,
   CheckCircle2,
+  TrendingDown,
   X
 } from 'lucide-react';
 
@@ -26,6 +27,7 @@ const navigation = [
   { name: 'Maler', href: '/maler', icon: FileText },
   { name: 'Ruter', href: '/ruter', icon: Truck },
   { name: 'Produksjon', href: '/produksjon', icon: ClipboardList },
+  { name: 'Svinn & faktisk', href: '/produksjon/logg', icon: TrendingDown },
   { name: 'Kjøreliste', href: '/kjoreliste', icon: MapPin },
   { name: 'Innstillinger', href: '/innstillinger', icon: Settings },
 ];

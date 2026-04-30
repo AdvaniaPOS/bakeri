@@ -11,6 +11,7 @@ import TemplateMatrix from './pages/TemplateMatrix';
 import Settings from './pages/Settings';
 import RoutesPage from './pages/RoutesPage';
 import ProductionReport from './pages/ProductionReport';
+import ProductionLog from './pages/ProductionLog';
 import DeliveryList from './pages/DeliveryList';
 import TenantsAdmin from './pages/TenantsAdmin';
 import Login from './pages/Login';
@@ -66,6 +67,7 @@ function AppRoutes() {
         <Route path="maler/kunde/:customerId" element={<TemplateMatrix />} />
         <Route path="ruter" element={<RoutesPage />} />
         <Route path="produksjon" element={<ProductionReport />} />
+        <Route path="produksjon/logg" element={<ProductionLog />} />
         <Route path="kjoreliste" element={<DeliveryList />} />
         <Route path="innstillinger" element={<Settings />} />
         <Route path="admin/tenants" element={<TenantsAdmin />} />

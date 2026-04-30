@@ -1188,3 +1188,72 @@ class DailyProductionSummary(Base, TimestampMixin, TenantMixin):
         UniqueConstraint("tenant_id", "production_date", name="uq_production_summary_tenant_date"),
         Index("ix_production_summaries_tenant_date", "tenant_id", "production_date"),
     )
+
+
+# =============================================================================
+# PRODUCTION LOG (faktisk produksjon + svinn)
+# =============================================================================
+
+class ProductionLog(Base, TimestampMixin, TenantMixin):
+    """
+    Loggfor faktisk produksjon og svinn pr produkt pr dato.
+
+    En rad pr (tenant_id, log_date, product_id). Bakeren registrerer:
+    - actual_qty: hvor mye som faktisk ble produsert
+    - waste_*: hvor mye som ble kassert (med arsak)
+
+    planned_qty er en snapshot fra ordrene for sporbarhet selv om ordre endres senere.
+    """
+    __tablename__ = "production_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    log_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="RESTRICT"),
+        nullable=False, index=True
+    )
+
+    planned_qty: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False,
+        comment="Planlagt produksjon (snapshot fra ordrene da loggen ble opprettet)"
+    )
+    actual_qty: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False,
+        comment="Faktisk produsert antall"
+    )
+
+    waste_returned: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False,
+        comment="Returnert fra kunde / ikke levert"
+    )
+    waste_burnt: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False,
+        comment="Brent / feilprodusert"
+    )
+    waste_quality: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False,
+        comment="Kassert pga kvalitet"
+    )
+    waste_other: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False,
+        comment="Annen kassasjon"
+    )
+
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Hvem registrerte
+    logged_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    product: Mapped["Product"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "log_date", "product_id",
+                         name="uq_production_log_tenant_date_product"),
+        Index("ix_production_logs_tenant_date", "tenant_id", "log_date"),
+        CheckConstraint("actual_qty >= 0", name="check_prodlog_actual_nonneg"),
+        CheckConstraint("waste_returned >= 0", name="check_prodlog_waste_returned_nonneg"),
+        CheckConstraint("waste_burnt >= 0", name="check_prodlog_waste_burnt_nonneg"),
+        CheckConstraint("waste_quality >= 0", name="check_prodlog_waste_quality_nonneg"),
+        CheckConstraint("waste_other >= 0", name="check_prodlog_waste_other_nonneg"),
+    )

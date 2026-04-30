@@ -96,6 +96,13 @@ def main() -> int:
             "customer_id, product_id, effective_from_date, effective_to_date",
         )
 
+    # Lag eventuelle helt nye tabeller (f.eks. production_logs)
+    print("Sjekker for nye tabeller...")
+    from app.database import Base
+    import app.models  # noqa: F401 -- registrer alle modeller
+    import app.auth_models  # noqa: F401
+    Base.metadata.create_all(bind=engine)
+
     print("Ferdig.")
     return 0
 
