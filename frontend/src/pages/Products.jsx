@@ -61,7 +61,8 @@ export default function Products() {
         category: p.category || 'ANNET',
         retailPrice: p.default_price || 0,
         unit: p.unit || 'stk',
-        active: p.is_active
+        active: p.is_active,
+        allergens: p.allergens || ''
       }));
       setProducts(mapped);
       setError(null);
@@ -225,6 +226,11 @@ export default function Products() {
                           <div className="font-medium text-gray-900 truncate">{product.name}</div>
                           {product.description && (
                             <div className="text-xs text-gray-500 truncate max-w-[300px]">{product.description}</div>
+                          )}
+                          {product.allergens && (
+                            <div className="text-xs text-amber-700 truncate max-w-[300px]" title={product.allergens}>
+                              Allergener: {product.allergens}
+                            </div>
                           )}
                         </div>
                       </div>

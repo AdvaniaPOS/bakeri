@@ -46,6 +46,27 @@ from ..models import (
 
 logger = logging.getLogger(__name__)
 
+
+def _format_allergens(raw) -> Optional[str]:
+    """Konverter SuSoft allergen-array (liste av {id,name}) til komma-separert tekst."""
+    if not raw or not isinstance(raw, list):
+        return None
+    names = []
+    for item in raw:
+        if isinstance(item, dict):
+            n = item.get("name")
+            if n:
+                names.append(str(n).strip())
+        elif isinstance(item, str):
+            names.append(item.strip())
+    if not names:
+        return None
+    # Dedupliser, behold rekkefølge
+    seen = set()
+    unique = [n for n in names if not (n in seen or seen.add(n))]
+    result = ", ".join(unique)
+    return result[:500]
+
 # Configuration - SuSoft API base URL (port 4443 per spec)
 SUSOFT_BASE_URL_DEFAULT = os.getenv("SUSOFT_BASE_URL", "https://api.susoft.com:4443")
 SUSOFT_USERNAME_ENV = os.getenv("SUSOFT_USERNAME", "")
@@ -1261,6 +1282,7 @@ class SuSoftService:
                         existing.vat_rate = Decimal(str(prod_data.get("vatPercent", existing.vat_rate or 15)))
                         existing.unit = (prod_data.get("unit") or existing.unit or "stk")[:20]
                         existing.is_active = prod_data.get("active", True)
+                        existing.allergens = _format_allergens(prod_data.get("allergens"))
                         existing.susoft_last_synced_at = datetime.utcnow()
                         results["updated"] += 1
                     else:
@@ -1277,6 +1299,7 @@ class SuSoftService:
                             unit=(prod_data.get("unit") or "stk")[:20],
                             vat_rate=Decimal(str(prod_data.get("vatPercent", 15))),
                             is_active=prod_data.get("active", True),
+                            allergens=_format_allergens(prod_data.get("allergens")),
                             susoft_last_synced_at=datetime.utcnow()
                         )
                         self.db.add(product)

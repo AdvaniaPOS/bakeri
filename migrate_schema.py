@@ -62,6 +62,7 @@ def main() -> int:
         add_column_if_missing(
             conn, "products", "vat_class", "VARCHAR(20) DEFAULT 'food_15' NOT NULL"
         )
+        add_column_if_missing(conn, "products", "allergens", "VARCHAR(500)")
 
         # orders
         add_column_if_missing(conn, "orders", "next_retry_at", "DATETIME")

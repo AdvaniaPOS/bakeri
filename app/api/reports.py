@@ -405,11 +405,20 @@ def _build_packing_list_data(tenant_id: int, target_date: date, db: Session) -> 
                 "product_name": line.product.name if line.product else "?",
                 "quantity": line.quantity,
                 "unit": line.product.unit if line.product else "",
+                "allergens": getattr(line.product, "allergens", None) if line.product else None,
             }
             for line in order.lines
         ]
         items_count = sum(l["quantity"] for l in lines)
         total_items += items_count
+        # Aggreger unike allergener for hele kundens ordre
+        allergen_set = set()
+        for l in lines:
+            if l.get("allergens"):
+                for a in str(l["allergens"]).split(","):
+                    a = a.strip()
+                    if a:
+                        allergen_set.add(a)
         customers.append({
             "customer_name": cust.name,
             "company_name": cust.company_name,
@@ -421,6 +430,7 @@ def _build_packing_list_data(tenant_id: int, target_date: date, db: Session) -> 
             "delivery_window_end": cust.delivery_window_end.isoformat() if cust.delivery_window_end else None,
             "delivery_instructions": cust.delivery_instructions,
             "lines": lines,
+            "allergens_summary": ", ".join(sorted(allergen_set)) if allergen_set else None,
         })
     return {"customers": customers, "total_items": total_items}
 
@@ -486,9 +496,18 @@ async def order_confirmation_pdf(
             "unit_price": float(l.unit_price or 0),
             "line_amount_excl_vat": float((l.unit_price or 0) * l.quantity),
             "notes": l.notes,
+            "allergens": getattr(l.product, "allergens", None) if l.product else None,
         }
         for l in order.lines
     ]
+    allergen_set = set()
+    for l in lines:
+        if l.get("allergens"):
+            for a in str(l["allergens"]).split(","):
+                a = a.strip()
+                if a:
+                    allergen_set.add(a)
+    allergens_summary = ", ".join(sorted(allergen_set)) if allergen_set else None
     ctx = {
         **tenant_header_context(tenant),
         "order": {
@@ -508,6 +527,7 @@ async def order_confirmation_pdf(
             "delivery_instructions": cust.delivery_instructions if cust else None,
         },
         "lines": lines,
+        "allergens_summary": allergens_summary,
         "totals": {
             "excl_vat": float(order.total_amount_excl_vat or 0),
             "vat": float(order.total_vat or 0),

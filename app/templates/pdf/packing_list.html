@@ -43,13 +43,21 @@
       {% for line in c.lines %}
       <tr>
         <td><span class="checkbox"></span></td>
-        <td>{{ line.product_name }}</td>
+        <td>
+          {{ line.product_name }}
+          {% if line.allergens %}<br><span class="small" style="color:#b45309">Allergener: {{ line.allergens }}</span>{% endif %}
+        </td>
         <td class="num"><strong>{{ line.quantity }}</strong></td>
         <td>{{ line.unit or '' }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  {% if c.allergens_summary %}
+  <div class="small" style="margin-top: 6pt; padding: 4pt 6pt; background: #fef3c7; border-left: 3px solid #b45309;">
+    <strong>Allergener i denne leveringen:</strong> {{ c.allergens_summary }}
+  </div>
+  {% endif %}
 </div>
 {% endfor %}
 

@@ -41,7 +41,11 @@
   <tbody>
     {% for line in lines %}
     <tr>
-      <td>{{ line.product_name }}{% if line.notes %}<br><span class="small muted">{{ line.notes }}</span>{% endif %}</td>
+      <td>
+        {{ line.product_name }}
+        {% if line.allergens %}<br><span class="small" style="color:#b45309">Allergener: {{ line.allergens }}</span>{% endif %}
+        {% if line.notes %}<br><span class="small muted">{{ line.notes }}</span>{% endif %}
+      </td>
       <td class="num">{{ line.quantity }}</td>
       <td>{{ line.unit or '' }}</td>
       <td class="num">{{ line.unit_price|money }}</td>

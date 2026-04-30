@@ -389,7 +389,13 @@ class Product(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     
     # Stock tracking (optional)
     min_order_quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    
+
+    # Allergener (komma-separert liste, synces fra SuSoft, kan overstyres lokalt)
+    allergens: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True,
+        comment="Komma-separert liste med allergener (f.eks. 'Hvete, Egg, Melk'). Hentes fra SuSoft."
+    )
+
     # Relationships
     custom_prices: Mapped[List["CustomerProductPrice"]] = relationship(
         back_populates="product", cascade="all, delete-orphan"

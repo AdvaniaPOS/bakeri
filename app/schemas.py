@@ -175,6 +175,10 @@ class ProductBase(BaseModel):
     is_active: bool = True
     is_available_for_order: bool = True
     min_order_quantity: int = Field(default=1, ge=1)
+    allergens: Optional[str] = Field(
+        None, max_length=500,
+        description="Komma-separert liste med allergener (f.eks. 'Hvete, Egg, Melk').",
+    )
 
 
 class ProductCreate(ProductBase):
@@ -192,6 +196,7 @@ class ProductUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_available_for_order: Optional[bool] = None
     min_order_quantity: Optional[int] = Field(None, ge=1)
+    allergens: Optional[str] = Field(None, max_length=500)
 
 
 class ProductResponse(ProductBase, TimestampSchema):
