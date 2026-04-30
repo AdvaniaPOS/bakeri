@@ -11,7 +11,7 @@
 {% endif %}
 
 {% for c in customers %}
-<div class="no-break" style="margin-top: 14pt; padding: 10pt; border: 1px solid #d1d5db; border-radius: 4pt;">
+<div class="no-break" style="padding: 10pt; border: 1px solid #d1d5db; border-radius: 4pt; {% if not loop.last %}page-break-after: always;{% endif %}">
   <div style="display: flex; justify-content: space-between; align-items: baseline;">
     <div>
       <h3 style="margin: 0;">{{ c.customer_name }}{% if c.company_name %} <span class="muted">— {{ c.company_name }}</span>{% endif %}</h3>

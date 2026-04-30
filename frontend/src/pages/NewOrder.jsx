@@ -25,8 +25,8 @@ export default function NewOrder() {
     async function fetchData() {
       try {
         const [custRes, prodRes] = await Promise.all([
-          authFetch('/api/v1/customers?page_size=500'),
-          authFetch('/api/v1/products?page_size=500')
+          authFetch('/api/v1/customers?page_size=500&is_active=true'),
+          authFetch('/api/v1/products?page_size=500&is_active=true')
         ]);
         
         if (!custRes.ok || !prodRes.ok) {
