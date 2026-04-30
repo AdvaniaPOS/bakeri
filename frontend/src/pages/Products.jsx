@@ -42,6 +42,7 @@ export default function Products() {
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
 
   const fetchProducts = async (searchTerm = '') => {
     setLoading(true);
@@ -101,6 +102,36 @@ export default function Products() {
     }
   };
 
+  const toggleSelected = (dbId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(dbId)) next.delete(dbId); else next.add(dbId);
+      return next;
+    });
+  };
+
+  const bulkSetActive = async (isActive) => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    const verb = isActive ? 'vise' : 'skjule';
+    if (!confirm(`Vil du ${verb} ${ids.length} valgte ${ids.length === 1 ? 'produkt' : 'produkter'}?`)) return;
+    try {
+      const response = await authFetch('/api/v1/products/bulk/set-active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, is_active: isActive })
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Kunne ikke oppdatere');
+      }
+      setProducts((prev) => prev.map(p => ids.includes(p.dbId) ? { ...p, active: isActive } : p));
+      setSelectedIds(new Set());
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   // Get unique categories
   const categories = [...new Set(products.map(p => p.category))];
   const activeCount = products.filter(p => p.active).length;
@@ -125,7 +156,7 @@ export default function Products() {
   }, {});
 
   // Reset page when filters change
-  useEffect(() => { setPage(1); }, [search, statusFilter, selectedCategory, pageSize]);
+  useEffect(() => { setPage(1); setSelectedIds(new Set()); }, [search, statusFilter, selectedCategory, pageSize]);
 
   const pagedProducts = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -222,9 +253,36 @@ export default function Products() {
           </div>
         ) : (
           <div className="overflow-x-auto">
+            {selectedIds.size > 0 && (
+              <div className="px-3 py-2 border-b border-amber-200 bg-amber-50 flex items-center gap-2 text-sm flex-wrap">
+                <span className="font-medium text-amber-900">{selectedIds.size} valgt</span>
+                <button onClick={() => bulkSetActive(false)} className="btn-secondary !py-1 !text-xs">
+                  <EyeOff className="w-3.5 h-3.5" /> Skjul valgte
+                </button>
+                <button onClick={() => bulkSetActive(true)} className="btn-secondary !py-1 !text-xs">
+                  <Eye className="w-3.5 h-3.5" /> Vis valgte
+                </button>
+                <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-600 hover:text-gray-900 ml-auto">
+                  Fjern utvalg
+                </button>
+              </div>
+            )}
             <table className="shop-table">
               <thead>
                 <tr>
+                  <th className="w-8">
+                    <input
+                      type="checkbox"
+                      checked={pagedProducts.length > 0 && pagedProducts.every(p => selectedIds.has(p.dbId))}
+                      onChange={(e) => {
+                        const next = new Set(selectedIds);
+                        if (e.target.checked) pagedProducts.forEach(p => next.add(p.dbId));
+                        else pagedProducts.forEach(p => next.delete(p.dbId));
+                        setSelectedIds(next);
+                      }}
+                      title="Velg alle paa siden"
+                    />
+                  </th>
                   <th>Produkt</th>
                   <th>Kategori</th>
                   <th>SKU</th>
@@ -236,7 +294,14 @@ export default function Products() {
               </thead>
               <tbody>
                 {pagedProducts.map((product) => (
-                  <tr key={product.id}>
+                  <tr key={product.id} className={selectedIds.has(product.dbId) ? 'bg-amber-50/50' : ''}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(product.dbId)}
+                        onChange={() => toggleSelected(product.dbId)}
+                      />
+                    </td>
                     <td>
                       <div className="flex items-center gap-2.5">
                         <div className="w-7 h-7 bg-amber-100 rounded flex items-center justify-center flex-shrink-0">

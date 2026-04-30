@@ -18,6 +18,7 @@ export default function Customers() {
   const [planCustomer, setPlanCustomer] = useState(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
 
   const fetchCustomers = async () => {
     setLoading(true);
@@ -57,7 +58,7 @@ export default function Customers() {
   });
 
   // Reset page when filter/search changes
-  useEffect(() => { setPage(1); }, [search, statusFilter, pageSize]);
+  useEffect(() => { setPage(1); setSelectedIds(new Set()); }, [search, statusFilter, pageSize]);
 
   const pagedCustomers = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -104,6 +105,36 @@ export default function Customers() {
       }
       // Optimistisk oppdatering
       setCustomers((prev) => prev.map(c => c.id === customer.id ? { ...c, is_active: next } : c));
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const toggleSelected = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkSetActive = async (isActive) => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    const verb = isActive ? 'vise' : 'skjule';
+    if (!confirm(`Vil du ${verb} ${ids.length} valgte ${ids.length === 1 ? 'kunde' : 'kunder'}?`)) return;
+    try {
+      const response = await authFetch('/api/v1/customers/bulk/set-active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, is_active: isActive })
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Kunne ikke oppdatere');
+      }
+      setCustomers((prev) => prev.map(c => ids.includes(c.id) ? { ...c, is_active: isActive } : c));
+      setSelectedIds(new Set());
     } catch (err) {
       alert(err.message);
     }
@@ -187,9 +218,36 @@ export default function Customers() {
           </div>
         ) : (
           <div className="overflow-x-auto">
+            {selectedIds.size > 0 && (
+              <div className="px-3 py-2 border-b border-amber-200 bg-amber-50 flex items-center gap-2 text-sm flex-wrap">
+                <span className="font-medium text-amber-900">{selectedIds.size} valgt</span>
+                <button onClick={() => bulkSetActive(false)} className="btn-secondary !py-1 !text-xs">
+                  <EyeOff className="w-3.5 h-3.5" /> Skjul valgte
+                </button>
+                <button onClick={() => bulkSetActive(true)} className="btn-secondary !py-1 !text-xs">
+                  <Eye className="w-3.5 h-3.5" /> Vis valgte
+                </button>
+                <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-600 hover:text-gray-900 ml-auto">
+                  Fjern utvalg
+                </button>
+              </div>
+            )}
             <table className="shop-table">
               <thead>
                 <tr>
+                  <th className="w-8">
+                    <input
+                      type="checkbox"
+                      checked={pagedCustomers.length > 0 && pagedCustomers.every(c => selectedIds.has(c.id))}
+                      onChange={(e) => {
+                        const next = new Set(selectedIds);
+                        if (e.target.checked) pagedCustomers.forEach(c => next.add(c.id));
+                        else pagedCustomers.forEach(c => next.delete(c.id));
+                        setSelectedIds(next);
+                      }}
+                      title="Velg alle paa siden"
+                    />
+                  </th>
                   <th>Kunde</th>
                   <th>Kontakt</th>
                   <th>Sted</th>
@@ -201,7 +259,15 @@ export default function Customers() {
               </thead>
               <tbody>
                 {pagedCustomers.map((customer) => (
-                  <tr key={customer.id}>
+                  <tr key={customer.id} className={selectedIds.has(customer.id) ? 'bg-amber-50/50' : ''}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(customer.id)}
+                        onChange={() => toggleSelected(customer.id)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </td>
                     <td>
                       <div className="flex items-center gap-2.5">
                         <div className="w-7 h-7 bg-amber-100 rounded flex items-center justify-center flex-shrink-0">

@@ -2,10 +2,11 @@
 Product API endpoints. Tenant-scoped.
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, func
+from pydantic import BaseModel, Field
+from sqlalchemy import select, func, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -153,6 +154,38 @@ async def update_product(
     db.commit()
 
     return ProductResponse.model_validate(product)
+
+
+class BulkSetActiveRequest(BaseModel):
+    ids: List[int] = Field(..., min_length=1, max_length=2000)
+    is_active: bool
+
+
+@router.post("/bulk/set-active")
+async def bulk_set_active(
+    payload: BulkSetActiveRequest,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Sett is_active paa flere produkter samtidig (skjul/vis i bulk)."""
+    result = db.execute(
+        update(Product)
+        .where(
+            Product.tenant_id == tenant.id,
+            Product.is_deleted == False,
+            Product.id.in_(payload.ids),
+        )
+        .values(is_active=payload.is_active)
+    )
+    db.add(AuditLog(
+        tenant_id=tenant.id,
+        entity_type="product",
+        entity_id=0,
+        action=AuditAction.UPDATE,
+        new_values={"bulk_set_active": payload.is_active, "ids": payload.ids, "updated": result.rowcount},
+    ))
+    db.commit()
+    return {"updated": result.rowcount, "is_active": payload.is_active}
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
