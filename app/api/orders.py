@@ -26,6 +26,7 @@ from .pricing import get_effective_price
 from ..cutoff import ensure_editable, is_order_locked, stamp_locked_at
 from ..time_utils import now_oslo, today_oslo, to_naive_utc, now_utc
 from ..tenant_scope import get_or_404
+from ..holidays_no import is_closed_day
 
 import logging
 logger = logging.getLogger(__name__)
@@ -1001,6 +1002,10 @@ async def get_horizon_status(
 
 def _generate_for_date(db: Session, tenant_id: int, target_date: date, customer_id: Optional[int] = None) -> dict:
     """Internal: generate orders from active templates for one date."""
+    # Hopp over nasjonale stengte dager (helligdager + julaften/påskeaften)
+    if is_closed_day(target_date):
+        return {"target_date": target_date.isoformat(), "created_count": 0, "skipped_count": 0, "created": [], "skipped": [], "reason": "closed_day"}
+
     day_of_week = target_date.weekday() + 1  # 1=Mon..7=Sun
 
     template_query = (
