@@ -13,7 +13,11 @@ export async function openPdf(authFetch, url) {
     let msg = `Klarte ikke hente PDF (${resp.status})`;
     try {
       const data = await resp.json();
-      if (data.detail) msg = data.detail;
+      if (typeof data.detail === 'string') {
+        msg = data.detail;
+      } else if (data.detail) {
+        msg = JSON.stringify(data.detail);
+      }
     } catch { /* ignore */ }
     throw new Error(msg);
   }

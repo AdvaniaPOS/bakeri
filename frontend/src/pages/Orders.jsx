@@ -516,7 +516,7 @@ export default function Orders() {
                             onClick={async () => {
                               try {
                                 const { openPdf } = await import('../utils/pdf');
-                                await openPdf(authFetch, `/api/v1/reports/order/${order.id}/confirmation.pdf`);
+                                await openPdf(authFetch, `/api/v1/reports/pdf/order/${order.id}/confirmation`);
                               } catch (e) { setError(e.message || 'Kunne ikke åpne PDF'); }
                             }}
                             className="p-1.5 text-gray-400 hover:text-blue-700 hover:bg-blue-50 rounded"

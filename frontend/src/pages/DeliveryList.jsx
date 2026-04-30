@@ -108,7 +108,7 @@ export default function DeliveryList() {
   const downloadDeliveryListPdf = async () => {
     if (!selectedRoute) return;
     try {
-      await openPdf(authFetch, `/api/v1/reports/delivery-list/${selectedRoute.id}/${formatDateISO(selectedDate)}.pdf`);
+      await openPdf(authFetch, `/api/v1/reports/pdf/delivery-list/${selectedRoute.id}/${formatDateISO(selectedDate)}`);
     } catch (e) {
       setError(e.message || 'Klarte ikke åpne PDF');
     }
@@ -116,7 +116,7 @@ export default function DeliveryList() {
 
   const downloadLabels = async (size) => {
     try {
-      const url = `/api/v1/reports/labels/${formatDateISO(selectedDate)}.pdf?size=${size}`
+      const url = `/api/v1/reports/pdf/labels/${formatDateISO(selectedDate)}?size=${size}`
         + (selectedRoute ? `&route_id=${selectedRoute.id}` : '');
       await openPdf(authFetch, url);
     } catch (e) {

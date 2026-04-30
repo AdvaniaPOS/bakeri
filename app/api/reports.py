@@ -2,20 +2,12 @@
 Reports & analytics endpoints. Tenant-scoped.
 """
 from collections import defaultdict
-from datetime import date, datetime, timedelta
-from typing import Annotated, List, Optional
+from datetime import date, timedelta
+from typing import List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-
-# Pattern that matches ISO date YYYY-MM-DD only (without trailing .pdf etc.)
-_DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
-DateParam = Annotated[str, Path(pattern=_DATE_PATTERN)]
-
-
-def _parse_date(value: str) -> date:
-    return datetime.strptime(value, "%Y-%m-%d").date()
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -68,11 +60,10 @@ def _active_orders_query(tenant_id: int, target_date: date):
 
 @router.get("/production/{target_date}")
 async def get_production_report(
-    target_date: DateParam,
+    target_date: date,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    target_date = _parse_date(target_date)
     orders = db.execute(_active_orders_query(tenant.id, target_date)).scalars().all()
 
     products_agg = {}
@@ -181,11 +172,10 @@ def _build_stops(orders):
 @router.get("/delivery-list/{route_id}/{target_date}")
 async def get_route_delivery_list(
     route_id: int,
-    target_date: DateParam,
+    target_date: date,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    target_date = _parse_date(target_date)
     route = get_or_404(db, Route, route_id, tenant.id, "Route not found")
 
     orders = db.execute(
@@ -435,13 +425,13 @@ def _build_packing_list_data(tenant_id: int, target_date: date, db: Session) -> 
     return {"customers": customers, "total_items": total_items}
 
 
-@router.get("/production/{target_date}.pdf")
+@router.get("/pdf/production/{target_date}")
 async def production_report_pdf(
     target_date: date,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    data = await get_production_report(target_date.isoformat(), db, tenant)
+    data = await get_production_report(target_date, db, tenant)
     ctx = {
         **tenant_header_context(tenant),
         "target_date": target_date,
@@ -454,7 +444,7 @@ async def production_report_pdf(
     return _pdf_response(pdf, f"produksjon-{target_date.isoformat()}.pdf")
 
 
-@router.get("/packing-list/{target_date}.pdf")
+@router.get("/pdf/packing-list/{target_date}")
 async def packing_list_pdf(
     target_date: date,
     db: Session = Depends(get_db),
@@ -470,7 +460,7 @@ async def packing_list_pdf(
     return _pdf_response(pdf, f"pakkeliste-{target_date.isoformat()}.pdf")
 
 
-@router.get("/order/{order_id}/confirmation.pdf")
+@router.get("/pdf/order/{order_id}/confirmation")
 async def order_confirmation_pdf(
     order_id: int,
     db: Session = Depends(get_db),
@@ -570,7 +560,7 @@ async def delivery_confirmation_pdf(
     return _pdf_response(pdf, f"ordre-{order.id}-leveringsbekreftelse.pdf")
 
 
-@router.get("/delivery-list/{route_id}/{target_date}.pdf")
+@router.get("/pdf/delivery-list/{route_id}/{target_date}")
 async def delivery_list_pdf(
     route_id: int,
     target_date: date,
@@ -629,7 +619,7 @@ async def delivery_list_pdf(
     return _pdf_response(pdf, f"leveringsliste-{route.name}-{target_date.isoformat()}.pdf")
 
 
-@router.get("/labels/{target_date}.pdf")
+@router.get("/pdf/labels/{target_date}")
 async def labels_pdf(
     target_date: date,
     size: str = "ql570",

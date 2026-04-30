@@ -127,7 +127,7 @@ export default function ProductionReport() {
 
   const downloadProductionPdf = async () => {
     try {
-      await openPdf(authFetch, `/api/v1/reports/production/${formatDateISO(selectedDate)}.pdf`);
+      await openPdf(authFetch, `/api/v1/reports/pdf/production/${formatDateISO(selectedDate)}`);
     } catch (e) {
       setError(e.message || 'Klarte ikke åpne PDF');
     }
@@ -135,7 +135,7 @@ export default function ProductionReport() {
 
   const downloadPackingListPdf = async () => {
     try {
-      await openPdf(authFetch, `/api/v1/reports/packing-list/${formatDateISO(selectedDate)}.pdf`);
+      await openPdf(authFetch, `/api/v1/reports/pdf/packing-list/${formatDateISO(selectedDate)}`);
     } catch (e) {
       setError(e.message || 'Klarte ikke åpne PDF');
     }
