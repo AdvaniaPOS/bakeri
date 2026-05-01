@@ -223,36 +223,82 @@ class SuSoftService:
         return items
 
     def _fetch_paginated_product_search(self, page_size: int = 200) -> List[Dict[str, Any]]:
-        """Fetch products via /product/search as full-sync strategy."""
-        items: List[Dict[str, Any]] = []
-        page = 0
+        """
+        Hent alle produkter fra Susoft og merk hvert med korrekt aktiv-status.
 
-        while True:
-            endpoint = f"/product/search?page={page}&pageSize={page_size}&activityFlag=ALL"
-            response = self._request_with_throttle_retry(
-                "POST",
-                endpoint,
-                json={"filterGroups": []},
-                headers=self._get_headers(),
-            )
+        Susoft sitt `/product/search`-endepunkt returnerer ALLTID
+        `"active": true` på hvert produkt uansett reell status (bekreftet via
+        scripts/probe_susoft_active.py mai 2026). Eneste pålitelige
+        diskriminator er hvilken liste produktet kommer fra:
+            activityFlag=ACTIVE   -> reelt aktive
+            activityFlag=INACTIVE -> reelt inaktive (skjult i Susoft-UI)
 
-            if not response.is_success:
-                raise SuSoftAPIError(
-                    f"Failed to fetch /product/search: {response.status_code}",
-                    response.status_code,
-                    response.text,
+        Vi kjører derfor to kall og overstyrer `active`-feltet basert på
+        hvilken bøtte produktet havnet i. Dedupe på `id` (en produkt kan i
+        teorien dukke opp i begge — vi prioriterer ACTIVE da).
+        """
+        def _fetch_one_flag(flag: str) -> List[Dict[str, Any]]:
+            collected: List[Dict[str, Any]] = []
+            page = 0
+            while True:
+                endpoint = f"/product/search?page={page}&pageSize={page_size}&activityFlag={flag}"
+                response = self._request_with_throttle_retry(
+                    "POST",
+                    endpoint,
+                    json={"filterGroups": []},
+                    headers=self._get_headers(),
                 )
+                if not response.is_success:
+                    raise SuSoftAPIError(
+                        f"Failed to fetch /product/search ({flag}): {response.status_code}",
+                        response.status_code,
+                        response.text,
+                    )
+                batch = response.json() or []
+                if not isinstance(batch, list):
+                    raise SuSoftAPIError(
+                        f"Unexpected response type from /product/search ({flag}): {type(batch).__name__}"
+                    )
+                collected.extend(batch)
+                if len(batch) < page_size:
+                    break
+                page += 1
+            return collected
 
-            batch = response.json() or []
-            if not isinstance(batch, list):
-                raise SuSoftAPIError(f"Unexpected response type from /product/search: {type(batch).__name__}")
+        active_items = _fetch_one_flag("ACTIVE")
+        inactive_items = _fetch_one_flag("INACTIVE")
 
-            items.extend(batch)
-            if len(batch) < page_size:
-                break
-            page += 1
+        seen_ids: set[str] = set()
+        merged: List[Dict[str, Any]] = []
 
-        return items
+        # ACTIVE først — vinner ved duplikat
+        for prod in active_items:
+            pid = prod.get("id")
+            if pid in (None, ""):
+                continue
+            pid_str = str(pid)
+            if pid_str in seen_ids:
+                continue
+            seen_ids.add(pid_str)
+            prod["active"] = True  # Tving korrekt verdi
+            merged.append(prod)
+
+        for prod in inactive_items:
+            pid = prod.get("id")
+            if pid in (None, ""):
+                continue
+            pid_str = str(pid)
+            if pid_str in seen_ids:
+                continue
+            seen_ids.add(pid_str)
+            prod["active"] = False  # Tving korrekt verdi (Susoft API lyver)
+            merged.append(prod)
+
+        logger.info(
+            "Susoft /product/search: %d aktive + %d inaktive = %d totalt (deduped)",
+            len(active_items), len(inactive_items), len(merged),
+        )
+        return merged
 
     def _fetch_category_name_map(self) -> Dict[str, str]:
         """Fetch the SuSoft product category tree and flatten to {id: name}.
