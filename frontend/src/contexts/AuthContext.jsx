@@ -314,10 +314,11 @@ export function AuthProvider({ children }) {
     return response;
   }, [getAccessToken, refreshAccessToken]);
 
-  // Check if user has any of the required roles
+  // Check if user has any of the required roles (case-insensitive)
   const hasRole = useCallback((...roles) => {
     if (!user) return false;
-    return roles.includes(user.role);
+    const userRole = (user.role || '').toLowerCase();
+    return roles.some(r => r.toLowerCase() === userRole);
   }, [user]);
 
   // Check if user is admin

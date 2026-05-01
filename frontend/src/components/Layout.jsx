@@ -77,8 +77,9 @@ export default function Layout() {
     return name.substring(0, 2).toUpperCase();
   };
   
-  // Get role display name
+  // Get role display name (case-insensitive)
   const getRoleDisplay = (role) => {
+    const key = (role || '').toUpperCase();
     const roleMap = {
       'SUPER_ADMIN': 'Super Admin',
       'TENANT_ADMIN': 'Administrator',
@@ -86,7 +87,7 @@ export default function Layout() {
       'DRIVER': 'Sjåfør',
       'VIEWER': 'Leser'
     };
-    return roleMap[role] || role;
+    return roleMap[key] || role;
   };
 
   return (
@@ -172,7 +173,7 @@ export default function Layout() {
               <span className="truncate">{item.name}</span>
             </NavLink>
           ))}
-          {user?.role === 'SUPER_ADMIN' && (
+          {(user?.role || '').toLowerCase() === 'super_admin' && (
             <>
               <div className="sidebar-section-label">Super-admin</div>
               {superAdminNavigation.map((item) => (

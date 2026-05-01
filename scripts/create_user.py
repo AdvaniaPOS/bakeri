@@ -119,6 +119,11 @@ def upsert_tenant_and_user(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Opprett eller oppdater bruker + tenant.")
     parser.add_argument("--demo", action="store_true", help="Opprett demo-bruker (demo@bakeri.local / demo123).")
+    parser.add_argument(
+        "--super-admin",
+        action="store_true",
+        help="Opprett super-admin-bruker (krever --email + --password). Bruker 'platform'-tenant.",
+    )
     parser.add_argument("--email")
     parser.add_argument("--password", help="Hvis utelatt og ikke --demo, blir du spurt interaktivt.")
     parser.add_argument("--first-name", default="")
@@ -145,6 +150,24 @@ def main(argv: list[str] | None = None) -> int:
             fast_hash=True,
         )
         print("\n✅ Demo-oppsett komplett (innlogging: demo@bakeri.local / demo123)")
+        return 0
+
+    if args.super_admin:
+        if not args.email:
+            parser.error("--super-admin krever --email")
+        password = args.password or getpass.getpass("Passord: ")
+        if not password:
+            parser.error("Passord kan ikke være tomt.")
+        upsert_tenant_and_user(
+            email=args.email,
+            password=password,
+            first_name=args.first_name or "Super",
+            last_name=args.last_name or "Admin",
+            tenant_slug="platform",
+            tenant_name="Platform Admin",
+            role=UserRole.SUPER_ADMIN,
+        )
+        print(f"\n✅ Super-admin opprettet ({args.email}). Logg inn og gå til /tenants-admin.")
         return 0
 
     missing = [f for f in ("email", "tenant_slug", "tenant_name") if not getattr(args, f.replace("-", "_"))]

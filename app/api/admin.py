@@ -1054,3 +1054,184 @@ async def super_admin_update_tenant_susoft(
         "susoft_config_locked": bool(tenant.susoft_config_locked),
     }
 
+
+# =============================================================================
+# SUPER-ADMIN: IMPERSONATE (logg inn paa en hvilken som helst tenant for support)
+# =============================================================================
+
+from ..auth import create_token_pair
+
+
+@router.post("/tenants/{tenant_id}/impersonate")
+async def impersonate_tenant(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """
+    SUPER_ADMIN: faa et nytt token-par der tenant_id peker paa onsket kunde.
+    Beholder rolle SUPER_ADMIN slik at brukeren fortsatt har full tilgang
+    og kan returnere til master-portalen naar som helst.
+    """
+    target_tenant = db.get(Tenant, tenant_id)
+    if not target_tenant or not target_tenant.is_active:
+        raise HTTPException(status_code=404, detail="Tenant ikke funnet eller inaktiv")
+
+    tokens = create_token_pair(
+        user_id=current_user.id,
+        tenant_id=target_tenant.id,
+        role=current_user.role.value,
+        email=current_user.email,
+    )
+    return {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "token_type": tokens.token_type,
+        "expires_in": tokens.expires_in,
+        "user": {
+            "id": current_user.id,
+            "email": current_user.email,
+            "first_name": current_user.first_name,
+            "last_name": current_user.last_name,
+            "role": current_user.role.value,
+            "tenant_id": target_tenant.id,
+        },
+        "tenant": {
+            "id": target_tenant.id,
+            "name": target_tenant.name,
+            "slug": target_tenant.slug,
+        },
+    }
+
+
+# =============================================================================
+# SUPER-ADMIN: HANDTERE FLERE SUPER-ADMINS
+# =============================================================================
+
+class SuperAdminSummary(BaseModel):
+    id: int
+    email: str
+    first_name: str
+    last_name: str
+    is_active: bool
+    last_login_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class SuperAdminCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    first_name: str = Field(default="Super", max_length=100)
+    last_name: str = Field(default="Admin", max_length=100)
+
+
+PLATFORM_TENANT_SLUG = "platform"
+
+
+def _ensure_platform_tenant(db: Session) -> Tenant:
+    """Hent eller opprett 'platform'-tenant som super-admins tilhorer."""
+    tenant = db.execute(
+        select(Tenant).where(Tenant.slug == PLATFORM_TENANT_SLUG)
+    ).scalar_one_or_none()
+    if tenant:
+        return tenant
+    tenant = Tenant(
+        slug=PLATFORM_TENANT_SLUG,
+        name="Platform Admin",
+        email="support@platform.local",
+        is_active=True,
+        subscription_plan=SubscriptionPlan.ENTERPRISE,
+        subscription_status=SubscriptionStatus.ACTIVE,
+    )
+    db.add(tenant)
+    db.flush()
+    return tenant
+
+
+@router.get("/super-admins", response_model=List[SuperAdminSummary])
+async def list_super_admins(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """List alle super-admin-brukere."""
+    users = db.execute(
+        select(User).where(User.role == UserRole.SUPER_ADMIN).order_by(User.id)
+    ).scalars().all()
+    return [
+        SuperAdminSummary(
+            id=u.id,
+            email=u.email,
+            first_name=u.first_name,
+            last_name=u.last_name,
+            is_active=u.is_active,
+            last_login_at=u.last_login_at,
+            created_at=u.created_at,
+        )
+        for u in users
+    ]
+
+
+@router.post("/super-admins", response_model=SuperAdminSummary, status_code=201)
+async def create_super_admin(
+    payload: SuperAdminCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """Opprett ny super-admin-bruker (knyttet til platform-tenant)."""
+    existing = db.execute(
+        select(User).where(User.email == payload.email)
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Bruker med epost '{payload.email}' finnes allerede")
+
+    platform = _ensure_platform_tenant(db)
+    user = User(
+        tenant_id=platform.id,
+        email=payload.email,
+        password_hash=get_password_hash(payload.password),
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        role=UserRole.SUPER_ADMIN,
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return SuperAdminSummary(
+        id=user.id,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        is_active=user.is_active,
+        last_login_at=user.last_login_at,
+        created_at=user.created_at,
+    )
+
+
+@router.delete("/super-admins/{user_id}", status_code=204)
+async def delete_super_admin(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """Slett super-admin. Kan ikke slette seg selv eller siste gjenvaerende."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Kan ikke slette deg selv")
+    target = db.get(User, user_id)
+    if not target or target.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(status_code=404, detail="Super-admin ikke funnet")
+    from sqlalchemy import func
+    count = db.execute(
+        select(func.count(User.id)).where(
+            User.role == UserRole.SUPER_ADMIN, User.is_active == True  # noqa: E712
+        )
+    ).scalar() or 0
+    if count <= 1:
+        raise HTTPException(status_code=400, detail="Kan ikke slette siste super-admin")
+    db.delete(target)
+    db.commit()
+
+
+
+

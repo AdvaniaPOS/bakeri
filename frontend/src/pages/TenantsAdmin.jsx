@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Building2, Plus, RefreshCw, CheckCircle, XCircle, AlertCircle, Lock, Unlock, Settings as SettingsIcon } from 'lucide-react';
+import { Building2, Plus, RefreshCw, CheckCircle, XCircle, AlertCircle, Lock, Unlock, Settings as SettingsIcon, LogIn, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const EMPTY_FORM = {
@@ -32,8 +32,14 @@ export default function TenantsAdmin() {
   const [editForm, setEditForm] = useState({ susoft_api_url: '', susoft_login: '', susoft_password: '', susoft_shop_url_key: '', config_locked: true });
   const [editError, setEditError] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+  // Super-admins
+  const [superAdmins, setSuperAdmins] = useState([]);
+  const [showAddAdmin, setShowAddAdmin] = useState(false);
+  const [adminForm, setAdminForm] = useState({ email: '', password: '', first_name: '', last_name: '' });
+  const [adminError, setAdminError] = useState(null);
+  const [adminSaving, setAdminSaving] = useState(false);
 
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const isSuperAdmin = (user?.role || '').toLowerCase() === 'super_admin';
 
   const loadTenants = async () => {
     setLoading(true);
@@ -53,9 +59,68 @@ export default function TenantsAdmin() {
   };
 
   useEffect(() => {
-    if (isSuperAdmin) loadTenants();
-    else setLoading(false);
+    if (isSuperAdmin) {
+      loadTenants();
+      loadSuperAdmins();
+    } else {
+      setLoading(false);
+    }
   }, [isSuperAdmin]);
+
+  const loadSuperAdmins = async () => {
+    try {
+      const resp = await authFetch('/api/v1/admin/super-admins');
+      if (resp.ok) setSuperAdmins(await resp.json());
+    } catch { /* ignore */ }
+  };
+
+  const addSuperAdmin = async (e) => {
+    e.preventDefault();
+    setAdminSaving(true);
+    setAdminError(null);
+    try {
+      const resp = await authFetch('/api/v1/admin/super-admins', { method: 'POST', body: adminForm });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      setAdminForm({ email: '', password: '', first_name: '', last_name: '' });
+      setShowAddAdmin(false);
+      loadSuperAdmins();
+    } catch (e) {
+      setAdminError(e.message);
+    } finally {
+      setAdminSaving(false);
+    }
+  };
+
+  const removeSuperAdmin = async (id) => {
+    if (!confirm('Slette denne super-adminen?')) return;
+    try {
+      const resp = await authFetch(`/api/v1/admin/super-admins/${id}`, { method: 'DELETE' });
+      if (!resp.ok && resp.status !== 204) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      loadSuperAdmins();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const impersonate = async (t) => {
+    if (!confirm(`Logge inn som support pa "${t.name}"?`)) return;
+    try {
+      const resp = await authFetch(`/api/v1/admin/tenants/${t.id}/impersonate`, { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('refresh_token', data.refresh_token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.setItem('tenant', JSON.stringify(data.tenant));
+      window.location.href = '/';
+    } catch (e) {
+      alert(e.message);
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -295,9 +360,14 @@ export default function TenantsAdmin() {
                       {t.is_active ? <span className="badge badge-success">Aktiv</span> : <span className="badge badge-neutral">Inaktiv</span>}
                     </td>
                     <td className="text-right">
-                      <button onClick={() => openEdit(t)} className="btn-secondary !py-1 !text-xs">
-                        <SettingsIcon className="w-3.5 h-3.5" /> Rediger SuSoft
-                      </button>
+                      <div className="flex gap-1 justify-end">
+                        <button onClick={() => impersonate(t)} className="btn-secondary !py-1 !text-xs" title="Logg inn som support paa denne tenanten">
+                          <LogIn className="w-3.5 h-3.5" /> Gå inn
+                        </button>
+                        <button onClick={() => openEdit(t)} className="btn-secondary !py-1 !text-xs">
+                          <SettingsIcon className="w-3.5 h-3.5" /> SuSoft
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -305,6 +375,82 @@ export default function TenantsAdmin() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Super Admins */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-indigo-600" /> Super-admins
+          </h2>
+          <button onClick={() => setShowAddAdmin(s => !s)} className="btn-primary text-sm">
+            <UserPlus className="w-4 h-4" /> Legg til super-admin
+          </button>
+        </div>
+
+        {showAddAdmin && (
+          <form onSubmit={addSuperAdmin} className="card mb-4 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium mb-1">E-post *</label>
+                <input required type="email" value={adminForm.email} onChange={e => setAdminForm({ ...adminForm, email: e.target.value })} className="input" autoComplete="off" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Passord * <span className="text-xs text-gray-400">(min 8 tegn)</span></label>
+                <input required type="password" minLength={8} value={adminForm.password} onChange={e => setAdminForm({ ...adminForm, password: e.target.value })} className="input" autoComplete="new-password" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Fornavn</label>
+                <input value={adminForm.first_name} onChange={e => setAdminForm({ ...adminForm, first_name: e.target.value })} className="input" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Etternavn</label>
+                <input value={adminForm.last_name} onChange={e => setAdminForm({ ...adminForm, last_name: e.target.value })} className="input" />
+              </div>
+            </div>
+            {adminError && <p className="text-sm text-red-600">{adminError}</p>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => { setShowAddAdmin(false); setAdminError(null); }} className="btn-secondary">Avbryt</button>
+              <button type="submit" disabled={adminSaving} className="btn-primary">{adminSaving ? 'Lagrer…' : 'Opprett'}</button>
+            </div>
+          </form>
+        )}
+
+        <div className="card p-0 overflow-hidden">
+          {superAdmins.length === 0 ? (
+            <p className="text-sm text-gray-500 p-4">Ingen super-admins.</p>
+          ) : (
+            <table className="shop-table">
+              <thead>
+                <tr>
+                  <th>E-post</th>
+                  <th>Navn</th>
+                  <th>Sist innlogget</th>
+                  <th>Status</th>
+                  <th className="text-right">Handling</th>
+                </tr>
+              </thead>
+              <tbody>
+                {superAdmins.map(a => (
+                  <tr key={a.id}>
+                    <td className="font-mono text-xs">{a.email}</td>
+                    <td>{a.first_name} {a.last_name}</td>
+                    <td className="text-xs text-gray-500">{a.last_login_at ? new Date(a.last_login_at).toLocaleString('nb-NO') : 'Aldri'}</td>
+                    <td>{a.is_active ? <span className="badge badge-success">Aktiv</span> : <span className="badge badge-neutral">Inaktiv</span>}</td>
+                    <td className="text-right">
+                      {a.id !== user?.id && (
+                        <button onClick={() => removeSuperAdmin(a.id)} className="btn-secondary !py-1 !text-xs text-red-600">
+                          <Trash2 className="w-3.5 h-3.5" /> Slett
+                        </button>
+                      )}
+                      {a.id === user?.id && <span className="text-xs text-gray-400">Deg selv</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
 
       {/* Edit Susoft modal */}
