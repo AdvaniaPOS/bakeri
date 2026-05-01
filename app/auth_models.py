@@ -34,6 +34,7 @@ class UserRole(str, PyEnum):
     MANAGER = "manager"              # Can manage orders, customers, products
     DRIVER = "driver"                # Can view deliveries, mark as complete
     VIEWER = "viewer"                # Read-only access
+    CUSTOMER_PORTAL = "customer_portal"  # Sluttkunde — ser kun egne ordrer (linket via User.customer_id)
 
 
 class SubscriptionPlan(str, PyEnum):
@@ -254,6 +255,14 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
         JSON, nullable=True, default=dict,
         comment="User preferences: language, notifications, etc."
     )
+
+    # Customer-portal binding: hvis satt, er denne brukeren en sluttkunde
+    # som kun har tilgang til ordrer for den linkede kunden.
+    customer_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+        comment="Sluttkunde-link (kun for role=CUSTOMER_PORTAL)."
+    )
     
     # Relationships
     tenant: Mapped[Optional["Tenant"]] = relationship(back_populates="users")
@@ -290,6 +299,7 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
             ],
             UserRole.DRIVER: ["view_deliveries", "update_delivery_status"],
             UserRole.VIEWER: ["view_customers", "view_products", "view_orders"],
+            UserRole.CUSTOMER_PORTAL: ["view_own_orders", "adjust_own_orders", "manage_own_holidays"],
         }
         
         role_permissions = permissions.get(self.role, [])

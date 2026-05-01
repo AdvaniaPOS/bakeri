@@ -13,7 +13,7 @@ from .database import init_db
 from .logging_config import setup_logging
 from .middleware import TenantContextMiddleware
 from .rate_limit import RateLimitMiddleware
-from .api import customers, products, pricing, templates, orders, admin, routes, reports, susoft_sync, auth, overrides, production
+from .api import customers, products, pricing, templates, orders, admin, routes, reports, susoft_sync, auth, overrides, production, driver
 
 
 @asynccontextmanager
@@ -141,6 +141,7 @@ app.include_router(reports.router, prefix="/api/v1")
 app.include_router(susoft_sync.router, prefix="/api/v1")
 app.include_router(overrides.router, prefix="/api/v1")
 app.include_router(production.router, prefix="/api/v1")
+app.include_router(driver.router, prefix="/api/v1")
 
 
 @app.get("/")

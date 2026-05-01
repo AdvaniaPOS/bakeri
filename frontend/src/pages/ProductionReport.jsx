@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { 
   Calendar, RefreshCw, ChevronLeft, ChevronRight, 
-  Package, ClipboardList, Download, Users 
+  Package, ClipboardList, Download, Users, Flame, Clock,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { openPdf } from '../utils/pdf';
@@ -41,10 +41,11 @@ export default function ProductionReport() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [defaultDateLoaded, setDefaultDateLoaded] = useState(false);
   const [report, setReport] = useState(null);
+  const [batchPlan, setBatchPlan] = useState(null);
   const [weekOverview, setWeekOverview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [view, setView] = useState('day'); // 'day' or 'week'
+  const [view, setView] = useState('day'); // 'day' | 'batch' | 'week'
 
   // Hent default-dato fra tenant-settings én gang ved mount.
   useEffect(() => {
@@ -106,10 +107,28 @@ export default function ProductionReport() {
     }
   };
 
+  const fetchBatchPlan = async () => {
+    setLoading(true);
+    try {
+      const dateStr = formatDateISO(selectedDate);
+      const response = await authFetch(`/api/v1/reports/production-batches/${dateStr}`);
+      if (!response.ok) throw new Error('Kunne ikke hente batch-plan');
+      setBatchPlan(await response.json());
+      setError(null);
+    } catch (err) {
+      console.error('Error loading batch plan:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!defaultDateLoaded) return; // vent til default-dato er hentet
     if (view === 'day') {
       fetchDailyReport();
+    } else if (view === 'batch') {
+      fetchBatchPlan();
     } else {
       fetchWeekOverview();
     }
@@ -187,6 +206,14 @@ export default function ProductionReport() {
               }`}
             >
               Dagsvisning
+            </button>
+            <button
+              onClick={() => setView('batch')}
+              className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                view === 'batch' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Batch-plan
             </button>
             <button
               onClick={() => setView('week')}
@@ -311,6 +338,108 @@ export default function ProductionReport() {
               </div>
             )}
           </div>
+        </>
+      )}
+
+      {/* Batch Plan View */}
+      {view === 'batch' && batchPlan && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            <div className="card card-tight">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 rounded"><Package className="w-4 h-4 text-amber-600" /></div>
+                <div>
+                  <p className="text-2xl font-semibold text-gray-900">{batchPlan.total_products}</p>
+                  <p className="text-xs uppercase tracking-wider text-gray-500">Produkter</p>
+                </div>
+              </div>
+            </div>
+            <div className="card card-tight">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-orange-100 rounded"><Flame className="w-4 h-4 text-orange-600" /></div>
+                <div>
+                  <p className="text-2xl font-semibold text-gray-900">{batchPlan.total_batches}</p>
+                  <p className="text-xs uppercase tracking-wider text-gray-500">Batches</p>
+                </div>
+              </div>
+            </div>
+            <div className="card card-tight">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded"><Clock className="w-4 h-4 text-blue-600" /></div>
+                <div>
+                  <p className="text-2xl font-semibold text-gray-900">{Math.round(batchPlan.total_minutes / 60 * 10) / 10}t</p>
+                  <p className="text-xs uppercase tracking-wider text-gray-500">Estimert tid</p>
+                </div>
+              </div>
+            </div>
+            <div className="card card-tight">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-green-100 rounded"><Users className="w-4 h-4 text-green-600" /></div>
+                <div>
+                  <p className="text-2xl font-semibold text-gray-900">{batchPlan.total_orders}</p>
+                  <p className="text-xs uppercase tracking-wider text-gray-500">Ordrer</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {batchPlan.steps.length === 0 ? (
+            <div className="card text-center text-gray-500 py-12">
+              Ingen produksjon planlagt for denne dagen.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {batchPlan.steps.map((step) => (
+                <div key={step.step} className="card p-0 overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between bg-amber-50">
+                    <div className="flex items-center gap-2">
+                      <Flame className="w-4 h-4 text-amber-700" />
+                      <h3 className="text-sm font-semibold text-amber-900">{step.step}</h3>
+                    </div>
+                    <div className="text-xs text-amber-800 flex items-center gap-3">
+                      <span>{step.total_batches} batches</span>
+                      <span>·</span>
+                      <span>{step.total_bake_quantity} stk å bake</span>
+                      {step.total_minutes > 0 && (
+                        <>
+                          <span>·</span>
+                          <span><Clock className="w-3 h-3 inline mr-1" />{step.total_minutes} min</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                      <tr>
+                        <th className="text-left px-3 py-2">Produkt</th>
+                        <th className="text-right px-3 py-2">Bestilt</th>
+                        <th className="text-right px-3 py-2">Batch-størrelse</th>
+                        <th className="text-right px-3 py-2">Antall batches</th>
+                        <th className="text-right px-3 py-2">Skal bake</th>
+                        <th className="text-right px-3 py-2">Overskudd</th>
+                        <th className="text-right px-3 py-2">Tid (min)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {step.items.map((it) => (
+                        <tr key={it.product_id} className="hover:bg-gray-50">
+                          <td className="px-3 py-2 font-medium text-gray-900">{it.product_name}</td>
+                          <td className="px-3 py-2 text-right">{it.ordered_quantity} {it.unit}</td>
+                          <td className="px-3 py-2 text-right text-gray-500">×{it.batch_size}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-amber-700">{it.batches}</td>
+                          <td className="px-3 py-2 text-right font-bold text-gray-900">{it.bake_quantity}</td>
+                          <td className={`px-3 py-2 text-right ${it.surplus > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                            {it.surplus > 0 ? `+${it.surplus}` : '0'}
+                          </td>
+                          <td className="px-3 py-2 text-right text-gray-500">{it.estimated_minutes || '–'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
 

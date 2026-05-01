@@ -98,6 +98,87 @@ async def get_production_report(
     }
 
 
+@router.get("/production-batches/{target_date}")
+async def get_production_batches(
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Produksjonsplan med batch-runding gruppert pr. produksjons-stasjon.
+
+    For hvert produkt:
+      - bestilt_antall  = sum av alle ordre-linjer
+      - batch_size      = `Product.batch_size` (default 1)
+      - batches         = ceil(bestilt / batch_size)
+      - skal_bake       = batches * batch_size  (rundet opp)
+      - overskudd       = skal_bake - bestilt   (til butikk/nettsalg)
+      - estimert_tid    = batches * production_lead_minutes
+    """
+    import math
+
+    orders = db.execute(_active_orders_query(tenant.id, target_date)).scalars().all()
+
+    products_agg: dict[int, dict] = {}
+    customers: set[int] = set()
+    for order in orders:
+        customers.add(order.customer_id)
+        for line in order.lines:
+            p = line.product
+            if not p:
+                continue
+            entry = products_agg.setdefault(p.id, {
+                "product_id": p.id,
+                "product_name": p.name,
+                "unit": p.unit,
+                "category": p.category or "Annet",
+                "production_step": p.production_step or "Uplassert",
+                "batch_size": max(1, p.batch_size or 1),
+                "lead_minutes": p.production_lead_minutes or 0,
+                "ordered_quantity": 0,
+            })
+            entry["ordered_quantity"] += line.quantity
+
+    # Rund opp til hele batches
+    by_step: dict[str, list[dict]] = defaultdict(list)
+    grand_total_minutes = 0
+    grand_total_batches = 0
+    for entry in products_agg.values():
+        ordered = entry["ordered_quantity"]
+        bs = entry["batch_size"]
+        batches = math.ceil(ordered / bs) if ordered > 0 else 0
+        bake = batches * bs
+        entry["batches"] = batches
+        entry["bake_quantity"] = bake
+        entry["surplus"] = max(0, bake - ordered)
+        entry["estimated_minutes"] = batches * entry["lead_minutes"]
+        grand_total_minutes += entry["estimated_minutes"]
+        grand_total_batches += batches
+        by_step[entry["production_step"]].append(entry)
+
+    # Sorter pr. stasjon: tyngste batches først
+    steps = []
+    for step_name, items in by_step.items():
+        items.sort(key=lambda x: (-x["batches"], x["product_name"]))
+        steps.append({
+            "step": step_name,
+            "items": items,
+            "total_batches": sum(i["batches"] for i in items),
+            "total_minutes": sum(i["estimated_minutes"] for i in items),
+            "total_bake_quantity": sum(i["bake_quantity"] for i in items),
+        })
+    steps.sort(key=lambda s: (-s["total_batches"], s["step"]))
+
+    return {
+        "date": target_date,
+        "total_orders": len(orders),
+        "total_customers": len(customers),
+        "total_products": len(products_agg),
+        "total_batches": grand_total_batches,
+        "total_minutes": grand_total_minutes,
+        "steps": steps,
+    }
+
+
 @router.get("/production-week")
 async def get_weekly_production_overview(
     start_date: date,

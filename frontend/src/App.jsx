@@ -13,6 +13,7 @@ import RoutesPage from './pages/RoutesPage';
 import ProductionReport from './pages/ProductionReport';
 import ProductionLog from './pages/ProductionLog';
 import DeliveryList from './pages/DeliveryList';
+import Driver from './pages/Driver';
 import TenantsAdmin from './pages/TenantsAdmin';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -69,6 +70,7 @@ function AppRoutes() {
         <Route path="produksjon" element={<ProductionReport />} />
         <Route path="produksjon/logg" element={<ProductionLog />} />
         <Route path="kjoreliste" element={<DeliveryList />} />
+        <Route path="sjafor" element={<Driver />} />
         <Route path="innstillinger" element={<Settings />} />
         <Route path="admin/tenants" element={<TenantsAdmin />} />
       </Route>

@@ -421,6 +421,20 @@ class Product(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     # Stock tracking (optional)
     min_order_quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
+    # Produksjonsplanlegging (batch-runding + ovns-/stasjons-gruppering)
+    batch_size: Mapped[int] = mapped_column(
+        Integer, default=1, nullable=False, server_default="1",
+        comment="Standard batch-størrelse for baking. Bestilt antall rundes opp til nærmeste batch."
+    )
+    production_step: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True,
+        comment="Produksjons-steg/stasjon (f.eks. 'Ovn 1', 'Bakebenk', 'Stekeovn'). Brukes til gruppering i produksjonsplan."
+    )
+    production_lead_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0",
+        comment="Estimert tid pr. batch i minutter (heving + steking)."
+    )
+
     # Allergener (komma-separert liste, synces fra SuSoft, kan overstyres lokalt)
     allergens: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True,
@@ -716,6 +730,10 @@ class Order(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     actual_delivery_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     delivered_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     delivery_signature: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    delivery_photo_url: Mapped[Optional[str]] = mapped_column(
+        String(1000), nullable=True,
+        comment="URL eller data-URL til bilde tatt ved levering (sjåfør-PWA)."
+    )
     delivery_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     # Order notes
@@ -797,6 +815,20 @@ class OrderLine(Base, TimestampMixin, TenantMixin):
     price_updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True,
         comment="Last time price was updated due to price schedule change"
+    )
+
+    # Faktisk levert / svinn / retur
+    delivered_quantity: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+        comment="Antall faktisk levert (sjåfør tikker av). NULL hvis ikke registrert ennå."
+    )
+    waste_quantity: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0",
+        comment="Svinn registrert for denne linjen (kastet/ikke solgt)."
+    )
+    return_quantity: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0",
+        comment="Retur fra dagligvare (krediteres kunden)."
     )
     
     notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)

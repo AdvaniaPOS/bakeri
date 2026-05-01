@@ -33,6 +33,7 @@ const navigation = [
   { name: 'Produksjon', href: '/produksjon', icon: ClipboardList },
   { name: 'Svinn & faktisk', href: '/produksjon/logg', icon: TrendingDown },
   { name: 'Kjøreliste', href: '/kjoreliste', icon: MapPin },
+  { name: 'Sjåfør', href: '/sjafor', icon: CheckCircle2 },
   { name: 'Innstillinger', href: '/innstillinger', icon: Settings },
 ];
 

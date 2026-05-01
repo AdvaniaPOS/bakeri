@@ -180,6 +180,20 @@ class ProductBase(BaseModel):
         description="Komma-separert liste med allergener (f.eks. 'Hvete, Egg, Melk').",
     )
 
+    # Produksjonsplanlegging
+    batch_size: int = Field(
+        default=1, ge=1,
+        description="Standard batch-størrelse for baking. Antall pr. ovnsbrett/deig.",
+    )
+    production_step: Optional[str] = Field(
+        default=None, max_length=100,
+        description="Produksjons-stasjon, f.eks. 'Ovn 1', 'Bakebenk', 'Stekeovn'.",
+    )
+    production_lead_minutes: int = Field(
+        default=0, ge=0,
+        description="Estimert tid pr. batch i minutter (heving + steking).",
+    )
+
 
 class ProductCreate(ProductBase):
     susoft_product_id: Optional[str] = Field(None, max_length=100)
@@ -197,6 +211,9 @@ class ProductUpdate(BaseModel):
     is_available_for_order: Optional[bool] = None
     min_order_quantity: Optional[int] = Field(None, ge=1)
     allergens: Optional[str] = Field(None, max_length=500)
+    batch_size: Optional[int] = Field(None, ge=1)
+    production_step: Optional[str] = Field(None, max_length=100)
+    production_lead_minutes: Optional[int] = Field(None, ge=0)
 
 
 class ProductResponse(ProductBase, TimestampSchema):
@@ -346,6 +363,9 @@ class OrderLineResponse(OrderLineBase, TimestampSchema):
     line_amount_incl_vat: Decimal
     is_adhoc_quantity: bool = False
     original_template_quantity: Optional[int] = None
+    delivered_quantity: Optional[int] = None
+    waste_quantity: int = 0
+    return_quantity: int = 0
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -394,6 +414,9 @@ class OrderResponse(OrderBase, TimestampSchema):
     route_position: Optional[int] = None
     estimated_delivery_time: Optional[datetime] = None
     actual_delivery_time: Optional[datetime] = None
+    delivered_by_user_id: Optional[int] = None
+    delivery_notes: Optional[str] = None
+    delivery_photo_url: Optional[str] = None
     
     customer_name: Optional[str] = None  # Populated from customer relationship
     
