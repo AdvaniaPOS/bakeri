@@ -53,3 +53,6 @@ mypy>=1.8.0
 
 # Production
 gunicorn>=21.0.0
+
+# Observability
+sentry-sdk[fastapi]>=2.0.0

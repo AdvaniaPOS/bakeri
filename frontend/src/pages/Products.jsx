@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Search, Filter, Plus, Edit2, Trash2, RefreshCw, Package, Eye, EyeOff } from 'lucide-react';
+import { Search, Filter, Plus, Edit2, Trash2, RefreshCw, Package, Eye, EyeOff, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Pagination from '../components/Pagination';
 
@@ -44,6 +44,7 @@ export default function Products() {
   const [pageSize, setPageSize] = useState(20);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [allCategories, setAllCategories] = useState([]);
+  const [editingProduct, setEditingProduct] = useState(null);
 
   const fetchProducts = async (searchTerm = '') => {
     setLoading(true);
@@ -65,7 +66,10 @@ export default function Products() {
         retailPrice: p.default_price || 0,
         unit: p.unit || 'stk',
         active: p.is_active,
-        allergens: p.allergens || ''
+        allergens: p.allergens || '',
+        batch_size: p.batch_size ?? 1,
+        production_step: p.production_step || '',
+        production_lead_minutes: p.production_lead_minutes ?? 0,
       }));
       setProducts(mapped);
       setError(null);
@@ -366,7 +370,7 @@ export default function Products() {
                         >
                           {product.active ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </button>
-                        <button className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded" title="Rediger">
+                        <button onClick={() => setEditingProduct(product)} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded" title="Rediger produksjonsfelt">
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -384,6 +388,125 @@ export default function Products() {
             />
           </div>
         )}
+      </div>
+
+      {editingProduct && (
+        <ProductionEditModal
+          product={editingProduct}
+          onClose={() => setEditingProduct(null)}
+          onSaved={(updated) => {
+            setProducts((prev) => prev.map(p => p.dbId === updated.dbId ? { ...p, ...updated } : p));
+            setEditingProduct(null);
+          }}
+          authFetch={authFetch}
+        />
+      )}
+    </div>
+  );
+}
+
+
+function ProductionEditModal({ product, onClose, onSaved, authFetch }) {
+  const [batchSize, setBatchSize] = useState(product.batch_size ?? 1);
+  const [productionStep, setProductionStep] = useState(product.production_step || '');
+  const [leadMinutes, setLeadMinutes] = useState(product.production_lead_minutes ?? 0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const save = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      const response = await authFetch(`/api/v1/products/${product.dbId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          batch_size: Math.max(1, parseInt(batchSize, 10) || 1),
+          production_step: productionStep.trim() || null,
+          production_lead_minutes: Math.max(0, parseInt(leadMinutes, 10) || 0),
+        }),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Kunne ikke lagre');
+      }
+      onSaved({
+        dbId: product.dbId,
+        batch_size: Math.max(1, parseInt(batchSize, 10) || 1),
+        production_step: productionStep.trim() || '',
+        production_lead_minutes: Math.max(0, parseInt(leadMinutes, 10) || 0),
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between px-5 py-3 border-b">
+          <h2 className="text-lg font-semibold text-gray-900">Produksjon: {product.name}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <form onSubmit={save} className="p-5 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Batch-størrelse
+              <span className="ml-1 text-xs text-gray-500">(antall pr. ovn/deig)</span>
+            </label>
+            <input
+              type="number"
+              min="1"
+              value={batchSize}
+              onChange={(e) => setBatchSize(e.target.value)}
+              className="input"
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Bestilt antall rundes opp til nærmeste batch i produksjonsplanen.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Produksjons-stasjon
+            </label>
+            <input
+              type="text"
+              value={productionStep}
+              onChange={(e) => setProductionStep(e.target.value)}
+              className="input"
+              placeholder="f.eks. Ovn 1, Bakebenk, Stekeovn"
+              maxLength={100}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Tid pr. batch (minutter)
+              <span className="ml-1 text-xs text-gray-500">(heving + steking)</span>
+            </label>
+            <input
+              type="number"
+              min="0"
+              value={leadMinutes}
+              onChange={(e) => setLeadMinutes(e.target.value)}
+              className="input"
+            />
+          </div>
+          {error && (
+            <div className="p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">{error}</div>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary">Avbryt</button>
+            <button type="submit" disabled={saving} className="btn-primary">
+              {saving ? 'Lagrer...' : 'Lagre'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

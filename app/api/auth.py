@@ -10,11 +10,12 @@ Wrapper rundt `app.auth` (kjerne-utilities for hashing/JWT) og eksponerer:
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr, Field
 
 from ..database import get_db
+from ..rate_limit import check_login_rate_limit
 from ..auth import (
     get_password_hash, 
     verify_password, 
@@ -126,6 +127,7 @@ class TenantResponse(BaseModel):
 @router.post("/login", response_model=LoginResponse)
 async def login(
     request: LoginRequest,
+    http_request: Request,
     db: Session = Depends(get_db)
 ):
     """
@@ -134,6 +136,9 @@ async def login(
     First tries local database (for demo/test users).
     Then forwards to SuSoft /user/auth for production users.
     """
+    # Brute-force-beskyttelse per IP (10 forsøk / 5 min default).
+    check_login_rate_limit(http_request)
+
     import httpx
     import os
 

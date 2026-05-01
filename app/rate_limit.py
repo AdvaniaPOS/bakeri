@@ -163,3 +163,40 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response.headers["X-RateLimit-Limit"] = str(limit)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
         return response
+
+
+# =============================================================================
+# Brute-force-beskyttelse for innlogging
+# =============================================================================
+
+# Hardere grense spesifikt for /api/v1/auth/login: maks 10 forsøk per IP per
+# 5 min. Blokkerer ikke samme IP fra å bruke andre endepunkter, men hindrer
+# automatiserte angrep på passord.
+LOGIN_LIMIT = int(os.getenv("LOGIN_RATE_LIMIT", "10"))
+LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_RATE_WINDOW", "300"))
+
+
+def check_login_rate_limit(request: Request) -> None:
+    """
+    Reiser 429 hvis IP-en har gjort for mange innloggingsforsøk innen vinduet.
+
+    Brukes som FastAPI-dependency på /auth/login og /auth/refresh slik at
+    angripere bremses uavhengig av bruker-eksistens.
+    """
+    client_host = request.client.host if request.client else "unknown"
+    # Forwarded-for hvis vi er bak nginx/Caddy.
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        client_host = fwd.split(",")[0].strip() or client_host
+
+    key = f"login:{client_host}"
+    allowed, _ = _backend.hit(key, LOGIN_LIMIT, LOGIN_WINDOW_SECONDS, time.time())
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"For mange innloggingsforsøk fra denne IP-en. "
+                f"Vent {LOGIN_WINDOW_SECONDS // 60} minutter."
+            ),
+            headers={"Retry-After": str(LOGIN_WINDOW_SECONDS)},
+        )

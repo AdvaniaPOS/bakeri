@@ -15,6 +15,28 @@ from .middleware import TenantContextMiddleware
 from .rate_limit import RateLimitMiddleware
 from .api import customers, products, pricing, templates, orders, admin, routes, reports, susoft_sync, auth, overrides, production, driver
 
+# Sentry: initieres tidlig (før app-bygging) hvis DSN er satt.
+# Sett SENTRY_DSN i .env. Tom verdi = deaktivert.
+_SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            environment=os.getenv("APP_ENV", "production"),
+            release=os.getenv("APP_RELEASE", "unknown"),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+            profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0.0")),
+            send_default_pii=False,
+            integrations=[FastApiIntegration(), SqlalchemyIntegration()],
+        )
+    except Exception as _exc:  # pragma: no cover
+        import logging as _l
+        _l.getLogger(__name__).warning("Sentry init feilet: %s", _exc)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -25,6 +47,24 @@ async def lifespan(app: FastAPI):
         json_output=os.getenv("LOG_JSON", "0") == "1",
     )
     init_db()
+
+    # Auto-migrer skjema (legg til manglende kolonner + backfill defaults)
+    # slik at vi aldri får 500-feil pga manglende kolonner etter en deploy.
+    # Kan deaktiveres ved AUTO_MIGRATE=0 (hvis man kjører Alembic separat).
+    if os.getenv("AUTO_MIGRATE", "1") != "0":
+        try:
+            from .auto_migrate import sync_schema
+            from .database import engine
+            result = sync_schema(engine)
+            if result["added"] or result["backfilled"]:
+                import logging as _logging
+                _logging.getLogger(__name__).info(
+                    "auto_migrate: added=%s backfilled=%s",
+                    result["added"], result["backfilled"],
+                )
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).error("auto_migrate failed: %s", exc, exc_info=True)
 
     # Startup: ensure horizon for all active tenants (best-effort, non-blocking).
     # Dette dekker scenariet hvor ingen logger inn på en stund — den daglige
