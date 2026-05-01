@@ -1240,20 +1240,21 @@ class SuSoftService:
             category_names = self._fetch_category_name_map()
 
             def resolve_category(prod: Dict[str, Any]) -> Optional[str]:
-                # Prefer the explicit name from SuSoft if present
-                name = prod.get("categoryName")
-                if name:
-                    return str(name)[:100]
-                # Otherwise build a path from category1..category5 using the tree
-                parts: List[str] = []
-                for key in ("category1", "category2", "category3", "category4", "category5"):
+                # Always use the deepest (leaf) category to match what is shown in SuSoft.
+                # category5 is the deepest level, walk backwards to find the first that is set.
+                for key in ("category5", "category4", "category3", "category2", "category1"):
                     cid = prod.get(key)
                     if not cid:
                         continue
                     cid_str = str(cid)
-                    parts.append(category_names.get(cid_str, cid_str))
-                if parts:
-                    return " / ".join(parts)[:100]
+                    leaf = category_names.get(cid_str)
+                    if leaf:
+                        return str(leaf)[:100]
+                # Fallback: explicit categoryName from SuSoft (take leaf if it is a path)
+                name = prod.get("categoryName")
+                if name:
+                    leaf = str(name).split("/")[-1].strip()
+                    return leaf[:100] if leaf else None
                 return None
 
             for prod_data in products_data:
