@@ -1282,9 +1282,19 @@ class SuSoftService:
                         existing.category = resolve_category(prod_data)
                         existing.vat_rate = Decimal(str(prod_data.get("vatPercent", existing.vat_rate or 15)))
                         existing.unit = (prod_data.get("unit") or existing.unit or "stk")[:20]
-                        # Respekter lokalt skjul/vis hvis admin har overstyrt
-                        if not getattr(existing, "is_active_overridden", False):
-                            existing.is_active = prod_data.get("active", True)
+                        # Aktiv-flagg fra Susoft:
+                        #  - Hvis Susoft sier active=false  -> alltid skjul (Susoft er fasit
+                        #    for "produktet finnes/er nedlagt"), selv om admin har overstyrt.
+                        #  - Hvis Susoft sier active=true   -> respekter lokal overstyring
+                        #    (admin kan ha skjult det manuelt for sortimentet).
+                        susoft_active = bool(prod_data.get("active", True))
+                        if not susoft_active:
+                            existing.is_active = False
+                            # Nullstill override-flagget slik at hvis Susoft senere
+                            # re-aktiverer produktet, blir det automatisk synlig igjen.
+                            existing.is_active_overridden = False
+                        elif not getattr(existing, "is_active_overridden", False):
+                            existing.is_active = True
                         existing.allergens = _format_allergens(prod_data.get("allergens"))
                         existing.susoft_last_synced_at = datetime.utcnow()
                         results["updated"] += 1
