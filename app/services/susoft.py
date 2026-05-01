@@ -1282,7 +1282,9 @@ class SuSoftService:
                         existing.category = resolve_category(prod_data)
                         existing.vat_rate = Decimal(str(prod_data.get("vatPercent", existing.vat_rate or 15)))
                         existing.unit = (prod_data.get("unit") or existing.unit or "stk")[:20]
-                        existing.is_active = prod_data.get("active", True)
+                        # Respekter lokalt skjul/vis hvis admin har overstyrt
+                        if not getattr(existing, "is_active_overridden", False):
+                            existing.is_active = prod_data.get("active", True)
                         existing.allergens = _format_allergens(prod_data.get("allergens"))
                         existing.susoft_last_synced_at = datetime.utcnow()
                         results["updated"] += 1

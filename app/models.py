@@ -412,6 +412,10 @@ class Product(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
 
     # Product state
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_active_overridden: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false",
+        comment="Hvis True, skal Susoft-sync IKKE overskrive is_active (lokal styring vinner)"
+    )
     is_available_for_order: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
     # Stock tracking (optional)

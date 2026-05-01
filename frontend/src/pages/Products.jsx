@@ -88,13 +88,13 @@ export default function Products() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await authFetch('/api/v1/products?page_size=1000');
+        const r = await authFetch('/api/v1/products/categories');
         if (!r.ok) return;
-        const data = await r.json();
-        const cats = [...new Set((data.items || []).map(p => p.category || 'ANNET'))]
+        const cats = await r.json();
+        const sorted = (cats || [])
           .filter(Boolean)
           .sort((a, b) => (categoryNames[a] || a).localeCompare(categoryNames[b] || b, 'no'));
-        setAllCategories(cats);
+        setAllCategories(sorted);
       } catch { /* ignore */ }
     })();
   }, []);
@@ -244,7 +244,7 @@ export default function Products() {
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
-            className="input w-auto min-w-[160px]"
+            className="input w-auto min-w-[220px]"
           >
             <option value="all">Alle kategorier</option>
             {categories.map(cat => (

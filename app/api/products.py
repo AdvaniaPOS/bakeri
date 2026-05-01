@@ -139,6 +139,10 @@ async def update_product(
     for key, value in update_data.items():
         setattr(product, key, value)
 
+    # Marker manuell overstyring av is_active sa Susoft-sync ikke overskriver
+    if "is_active" in update_data:
+        product.is_active_overridden = True
+
     db.commit()
     db.refresh(product)
 
