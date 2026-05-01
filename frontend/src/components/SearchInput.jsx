@@ -31,24 +31,25 @@ export default function SearchInput({
 }) {
   const [touched, setTouched] = useState(false);
   const debounceRef = useRef(null);
-  const lastSentRef = useRef('');
+  const lastSentRef = useRef(null); // null = ikke sendt enda; '' = sendt tom
+  const onSearchRef = useRef(onSearch);
+  useEffect(() => { onSearchRef.current = onSearch; }, [onSearch]);
 
-  // Debounced trigger
+  // Debounced trigger - bevisst IKKE avhengig av onSearch (bruker ref)
+  // for aa unngaa loop naar foreldren sender ny callback hver render.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const trimmed = (value || '').trim();
     debounceRef.current = setTimeout(() => {
-      // Tom -> alltid kjør (resetter listen).
-      // Ellers: krever minst minChars.
       if (trimmed.length === 0 || trimmed.length >= minChars) {
         if (trimmed !== lastSentRef.current) {
           lastSentRef.current = trimmed;
-          onSearch?.(trimmed);
+          onSearchRef.current?.(trimmed);
         }
       }
     }, debounceMs);
     return () => debounceRef.current && clearTimeout(debounceRef.current);
-  }, [value, minChars, debounceMs, onSearch]);
+  }, [value, minChars, debounceMs]);
 
   const trimmed = (value || '').trim();
   const showHint = touched && trimmed.length > 0 && trimmed.length < minChars;
@@ -56,7 +57,7 @@ export default function SearchInput({
   const triggerNow = (term) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     lastSentRef.current = term;
-    onSearch?.(term);
+    onSearchRef.current?.(term);
   };
 
   const handleKeyDown = (e) => {
