@@ -43,6 +43,7 @@ export default function Products() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [allCategories, setAllCategories] = useState([]);
 
   const fetchProducts = async (searchTerm = '') => {
     setLoading(true);
@@ -82,6 +83,21 @@ export default function Products() {
     }, search ? 300 : 0);
     return () => clearTimeout(handle);
   }, [statusFilter, search]);
+
+  // Hent alle kategorier (uavhengig av status/sok-filter) for kategorimenyen
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await authFetch('/api/v1/products?page_size=1000');
+        if (!r.ok) return;
+        const data = await r.json();
+        const cats = [...new Set((data.items || []).map(p => p.category || 'ANNET'))]
+          .filter(Boolean)
+          .sort((a, b) => (categoryNames[a] || a).localeCompare(categoryNames[b] || b, 'no'));
+        setAllCategories(cats);
+      } catch { /* ignore */ }
+    })();
+  }, []);
 
   const toggleActive = async (product) => {
     const next = !product.active;
@@ -132,8 +148,10 @@ export default function Products() {
     }
   };
 
-  // Get unique categories
-  const categories = [...new Set(products.map(p => p.category))];
+  // Get unique categories (kombiner alle kjente med de som finnes i synlige produkter)
+  const categories = [...new Set([...allCategories, ...products.map(p => p.category)])]
+    .filter(Boolean)
+    .sort((a, b) => (categoryNames[a] || a).localeCompare(categoryNames[b] || b, 'no'));
   const activeCount = products.filter(p => p.active).length;
   const inactiveCount = products.length - activeCount;
 
