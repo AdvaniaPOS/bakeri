@@ -160,7 +160,6 @@ export default function TenantsAdmin() {
     setEditError(null);
     try {
       const payload = {
-        api_url: editForm.susoft_api_url || null,
         login: editForm.susoft_login || null,
         shop_url_key: editForm.susoft_shop_url_key || null,
         config_locked: editForm.config_locked,
@@ -280,11 +279,8 @@ export default function TenantsAdmin() {
           </div>
 
           <h3 className="font-medium text-gray-900 pt-4 border-t">SuSoft tilgang (valgfritt)</h3>
+          <p className="text-xs text-gray-500 -mt-2">API URL er fast: <code>https://api.susoft.com:4443</code></p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">SuSoft API URL</label>
-              <input value={form.susoft_api_url} onChange={e => setForm({ ...form, susoft_api_url: e.target.value })} className="input" />
-            </div>
             <div>
               <label className="block text-sm font-medium mb-1">Shop Key</label>
               <input value={form.susoft_shop_url_key} onChange={e => setForm({ ...form, susoft_shop_url_key: e.target.value })} className="input" />
@@ -464,11 +460,8 @@ export default function TenantsAdmin() {
               </div>
               <button type="button" onClick={() => setEditTenant(null)} className="text-gray-400 hover:text-gray-700">&times;</button>
             </div>
+            <p className="text-xs text-gray-500">API URL er fast: <code>https://api.susoft.com:4443</code></p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium mb-1">API URL</label>
-                <input value={editForm.susoft_api_url} onChange={e => setEditForm({ ...editForm, susoft_api_url: e.target.value })} className="input" placeholder="https://api.susoft.com:4443" />
-              </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Shop Key</label>
                 <input value={editForm.susoft_shop_url_key} onChange={e => setEditForm({ ...editForm, susoft_shop_url_key: e.target.value })} className="input" />
@@ -477,7 +470,7 @@ export default function TenantsAdmin() {
                 <label className="block text-sm font-medium mb-1">E-post</label>
                 <input type="email" value={editForm.susoft_login} onChange={e => setEditForm({ ...editForm, susoft_login: e.target.value })} className="input" autoComplete="off" />
               </div>
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium mb-1">
                   Passord {editTenant.susoft_has_password && <span className="text-xs text-gray-400">(lagret &mdash; tomt = behold)</span>}
                 </label>

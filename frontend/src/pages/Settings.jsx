@@ -139,7 +139,6 @@ export default function Settings() {
     setConfigMessage(null);
     try {
       const payload = {
-        api_url: config.api_url || null,
         login: config.login || null,
         shop_url_key: config.shop_url_key || null,
       };
@@ -248,17 +247,6 @@ export default function Settings() {
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">API URL</label>
-              <input
-                type="text"
-                value={config.api_url || ''}
-                onChange={e => setConfig(c => ({ ...c, api_url: e.target.value }))}
-                placeholder="https://api.susoft.com:4443"
-                className="input"
-                disabled={!config.can_edit}
-              />
-            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Shop Key (X-Shop-Url-Key)</label>
               <input
