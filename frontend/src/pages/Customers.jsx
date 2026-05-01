@@ -4,11 +4,13 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import QuickOverrideModal from '../components/QuickOverrideModal';
 import Pagination from '../components/Pagination';
+import SearchInput from '../components/SearchInput';
 
 export default function Customers() {
   const { authFetch } = useAuth();
   const [customers, setCustomers] = useState([]);
   const [search, setSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -44,10 +46,12 @@ export default function Customers() {
   const inactiveCount = customers.length - activeCount;
 
   const filteredCustomers = customers.filter(c => {
+    const q = (appliedSearch || '').toLowerCase();
     const matchesSearch =
-      c.name?.toLowerCase().includes(search.toLowerCase()) ||
-      c.contact_person?.toLowerCase().includes(search.toLowerCase()) ||
-      c.city?.toLowerCase().includes(search.toLowerCase());
+      !q ||
+      c.name?.toLowerCase().includes(q) ||
+      c.contact_person?.toLowerCase().includes(q) ||
+      c.city?.toLowerCase().includes(q);
 
     const matchesStatus =
       statusFilter === 'all' ||
@@ -58,7 +62,7 @@ export default function Customers() {
   });
 
   // Reset page when filter/search changes
-  useEffect(() => { setPage(1); setSelectedIds(new Set()); }, [search, statusFilter, pageSize]);
+  useEffect(() => { setPage(1); setSelectedIds(new Set()); }, [appliedSearch, statusFilter, pageSize]);
 
   const pagedCustomers = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -201,13 +205,13 @@ export default function Customers() {
             </button>
           </div>
           <div className="relative flex-1 min-w-[220px]">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Søk og filtrer..."
+            <SearchInput
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="input pl-8"
+              onChange={setSearch}
+              onSearch={setAppliedSearch}
+              placeholder="Sok kunde (min. 3 tegn, Enter for aa tvinge)"
+              minChars={3}
+              ariaLabel="Sok kunder"
             />
           </div>
         </div>

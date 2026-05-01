@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Search, Filter, Plus, Edit2, Trash2, RefreshCw, Package, Eye, EyeOff, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Pagination from '../components/Pagination';
+import SearchInput from '../components/SearchInput';
 
 // Category names in Norwegian
 const categoryNames = {
@@ -82,11 +83,10 @@ export default function Products() {
   };
 
   useEffect(() => {
-    const handle = setTimeout(() => {
-      fetchProducts(search);
-    }, search ? 300 : 0);
-    return () => clearTimeout(handle);
-  }, [statusFilter, search]);
+    // Hent ved monter + naar status endres. Soketekst trigges via SearchInput.
+    fetchProducts(search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
 
   // Hent alle kategorier (uavhengig av status/sok-filter) for kategorimenyen
   useEffect(() => {
@@ -256,13 +256,13 @@ export default function Products() {
             ))}
           </select>
           <div className="relative flex-1 min-w-[220px]">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Søk og filtrer..."
+            <SearchInput
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="input pl-8"
+              onChange={setSearch}
+              onSearch={(term) => fetchProducts(term)}
+              placeholder="Sok produkt (min. 3 tegn, Enter for aa tvinge)"
+              minChars={3}
+              ariaLabel="Sok produkter"
             />
           </div>
         </div>
