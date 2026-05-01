@@ -135,6 +135,10 @@ class Tenant(Base, TimestampMixin, SoftDeleteMixin):
         Text, nullable=True,
         comment="Siste feilmelding fra SuSoft"
     )
+    susoft_config_locked: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true",
+        comment="Hvis True kan kun SUPER_ADMIN endre Susoft-konfig (TENANT_ADMIN ser kun les)"
+    )
 
     # Periodeplan-horisont (auto-fyll av ordrer fra maler)
     last_horizon_check_at: Mapped[Optional[datetime]] = mapped_column(

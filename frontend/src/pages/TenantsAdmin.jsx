@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Building2, Plus, RefreshCw, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Building2, Plus, RefreshCw, CheckCircle, XCircle, AlertCircle, Lock, Unlock, Settings as SettingsIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const EMPTY_FORM = {
@@ -27,6 +27,11 @@ export default function TenantsAdmin() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState(null);
+  // Edit Susoft per tenant
+  const [editTenant, setEditTenant] = useState(null);
+  const [editForm, setEditForm] = useState({ susoft_api_url: '', susoft_login: '', susoft_password: '', susoft_shop_url_key: '', config_locked: true });
+  const [editError, setEditError] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
 
   const isSuperAdmin = user?.role === 'SUPER_ADMIN';
 
@@ -69,6 +74,58 @@ export default function TenantsAdmin() {
       setFormError(e.message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const openEdit = (t) => {
+    setEditTenant(t);
+    setEditError(null);
+    setEditForm({
+      susoft_api_url: t.susoft_api_url || '',
+      susoft_login: t.susoft_login || '',
+      susoft_password: '',
+      susoft_shop_url_key: t.susoft_shop_url_key || '',
+      config_locked: !!t.susoft_config_locked,
+    });
+  };
+
+  const saveEdit = async (e) => {
+    e.preventDefault();
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const payload = {
+        api_url: editForm.susoft_api_url || null,
+        login: editForm.susoft_login || null,
+        shop_url_key: editForm.susoft_shop_url_key || null,
+        config_locked: editForm.config_locked,
+      };
+      if (editForm.susoft_password) payload.password = editForm.susoft_password;
+      const resp = await authFetch(`/api/v1/admin/tenants/${editTenant.id}/susoft-config`, { method: 'PUT', body: payload });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      setEditTenant(null);
+      loadTenants();
+    } catch (e) {
+      setEditError(e.message);
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const toggleLock = async (t) => {
+    try {
+      const resp = await authFetch(`/api/v1/admin/tenants/${t.id}/susoft-config`, {
+        method: 'PUT',
+        body: { config_locked: !t.susoft_config_locked },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      loadTenants();
+    } catch (e) {
+      alert(e.message);
     }
   };
 
@@ -202,7 +259,9 @@ export default function TenantsAdmin() {
                   <th>Plan</th>
                   <th>Brukere</th>
                   <th>SuSoft</th>
+                  <th>Lås</th>
                   <th>Status</th>
+                  <th className="text-right">Handlinger</th>
                 </tr>
               </thead>
               <tbody>
@@ -224,7 +283,21 @@ export default function TenantsAdmin() {
                       )}
                     </td>
                     <td>
+                      <button
+                        onClick={() => toggleLock(t)}
+                        className={t.susoft_config_locked ? 'badge badge-warning hover:opacity-80' : 'badge badge-neutral hover:opacity-80'}
+                        title={t.susoft_config_locked ? 'Klikk for å låse opp' : 'Klikk for å låse'}
+                      >
+                        {t.susoft_config_locked ? <><Lock className="w-3 h-3" /> Låst</> : <><Unlock className="w-3 h-3" /> Åpen</>}
+                      </button>
+                    </td>
+                    <td>
                       {t.is_active ? <span className="badge badge-success">Aktiv</span> : <span className="badge badge-neutral">Inaktiv</span>}
+                    </td>
+                    <td className="text-right">
+                      <button onClick={() => openEdit(t)} className="btn-secondary !py-1 !text-xs">
+                        <SettingsIcon className="w-3.5 h-3.5" /> Rediger SuSoft
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -233,6 +306,51 @@ export default function TenantsAdmin() {
           </div>
         )}
       </div>
+
+      {/* Edit Susoft modal */}
+      {editTenant && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setEditTenant(null)}>
+          <form onClick={(e) => e.stopPropagation()} onSubmit={saveEdit} className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-auto">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">SuSoft-konfig: {editTenant.name}</h2>
+                <p className="text-xs text-gray-500 font-mono">{editTenant.slug}</p>
+              </div>
+              <button type="button" onClick={() => setEditTenant(null)} className="text-gray-400 hover:text-gray-700">&times;</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium mb-1">API URL</label>
+                <input value={editForm.susoft_api_url} onChange={e => setEditForm({ ...editForm, susoft_api_url: e.target.value })} className="input" placeholder="https://api.susoft.com:4443" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Shop Key</label>
+                <input value={editForm.susoft_shop_url_key} onChange={e => setEditForm({ ...editForm, susoft_shop_url_key: e.target.value })} className="input" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">E-post</label>
+                <input type="email" value={editForm.susoft_login} onChange={e => setEditForm({ ...editForm, susoft_login: e.target.value })} className="input" autoComplete="off" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Passord {editTenant.susoft_has_password && <span className="text-xs text-gray-400">(lagret &mdash; tomt = behold)</span>}
+                </label>
+                <input type="password" value={editForm.susoft_password} onChange={e => setEditForm({ ...editForm, susoft_password: e.target.value })} className="input" autoComplete="new-password" placeholder={editTenant.susoft_has_password ? '••••••••' : ''} />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-sm pt-2 border-t">
+              <input type="checkbox" checked={editForm.config_locked} onChange={e => setEditForm({ ...editForm, config_locked: e.target.checked })} />
+              <Lock className="w-4 h-4 text-amber-700" />
+              <span><strong>L&aring;s konfigurasjonen</strong> &mdash; tenant-admin kan se men ikke endre</span>
+            </label>
+            {editError && <p className="text-sm text-red-600">{editError}</p>}
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <button type="button" onClick={() => setEditTenant(null)} className="btn-secondary">Avbryt</button>
+              <button type="submit" disabled={editSaving} className="btn-primary">{editSaving ? 'Lagrer…' : 'Lagre'}</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

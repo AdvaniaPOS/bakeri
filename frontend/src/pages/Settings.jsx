@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle } from 'lucide-react';
+import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Settings() {
-  const { authFetch } = useAuth();
+  const { authFetch, user } = useAuth();
   const [syncStatus, setSyncStatus] = useState({ customers: null, products: null });
   const [syncing, setSyncing] = useState({ customers: false, products: false });
   const [connectionStatus, setConnectionStatus] = useState(null);
@@ -18,6 +18,8 @@ export default function Settings() {
     connection_status: null,
     last_check_at: null,
     last_error: null,
+    is_locked: true,
+    can_edit: false,
   });
   const [password, setPassword] = useState('');
   const [savingConfig, setSavingConfig] = useState(false);
@@ -229,7 +231,22 @@ export default function Settings() {
               <p className="text-sm text-gray-500">Synkroniser data med SuSoft POS-system</p>
             </div>
           </div>
-          
+
+          {config.is_locked && !config.can_edit && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-md flex items-start gap-2 text-sm">
+              <Lock className="w-4 h-4 text-amber-700 mt-0.5 flex-shrink-0" />
+              <div className="text-amber-900">
+                <strong>Susoft-konfigurasjonen er l&aring;st av support.</strong> Du kan se innstillingene og k&oslash;re synkronisering, men ikke endre tilgangsdata. Kontakt support for &aring; gj&oslash;re endringer.
+              </div>
+            </div>
+          )}
+          {config.is_locked && config.can_edit && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md flex items-start gap-2 text-sm">
+              <Shield className="w-4 h-4 text-blue-700 mt-0.5 flex-shrink-0" />
+              <div className="text-blue-900">L&aring;st for kunden &mdash; kun du (super-admin) kan endre.</div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">API URL</label>
@@ -239,6 +256,7 @@ export default function Settings() {
                 onChange={e => setConfig(c => ({ ...c, api_url: e.target.value }))}
                 placeholder="https://api.susoft.com:4443"
                 className="input"
+                disabled={!config.can_edit}
               />
             </div>
             <div>
@@ -249,6 +267,7 @@ export default function Settings() {
                 onChange={e => setConfig(c => ({ ...c, shop_url_key: e.target.value }))}
                 placeholder="f.eks. jonb"
                 className="input"
+                disabled={!config.can_edit}
               />
             </div>
             <div>
@@ -260,11 +279,12 @@ export default function Settings() {
                 placeholder="bruker@firma.no"
                 className="input"
                 autoComplete="username"
+                disabled={!config.can_edit}
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Passord {config.has_password && <span className="text-xs text-gray-400">(lagret — la stå tomt for å beholde)</span>}
+                Passord {config.has_password && <span className="text-xs text-gray-400">(lagret &mdash; la st&aring; tomt for &aring; beholde)</span>}
               </label>
               <input
                 type="password"
@@ -273,6 +293,7 @@ export default function Settings() {
                 placeholder={config.has_password ? '••••••••••••' : 'Skriv passord'}
                 className="input"
                 autoComplete="new-password"
+                disabled={!config.can_edit}
               />
             </div>
           </div>
@@ -287,8 +308,9 @@ export default function Settings() {
             </div>
             <button
               onClick={saveConfig}
-              disabled={savingConfig}
+              disabled={savingConfig || !config.can_edit}
               className="btn-primary text-sm flex items-center gap-2"
+              title={!config.can_edit ? 'Konfig er laast - kontakt support' : ''}
             >
               <Save className="w-4 h-4" />
               {savingConfig ? 'Lagrer…' : 'Lagre tilgang'}

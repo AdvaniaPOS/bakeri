@@ -638,6 +638,8 @@ class SuSoftConfigResponse(BaseModel):
     connection_status: Optional[str] = None
     last_check_at: Optional[datetime] = None
     last_error: Optional[str] = None
+    is_locked: bool = True
+    can_edit: bool = False  # Beregnes basert paa is_locked + bruker-rolle
 
 
 class SuSoftConfigUpdate(BaseModel):
@@ -650,9 +652,11 @@ class SuSoftConfigUpdate(BaseModel):
 @router.get("/susoft-config", response_model=SuSoftConfigResponse)
 async def get_susoft_config(
     tenant: Tenant = Depends(get_current_tenant),
-    _: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
+    user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
 ):
     """Hent SuSoft-konfigurasjon for gjeldende tenant. Passordet eksponeres aldri."""
+    locked = bool(getattr(tenant, "susoft_config_locked", True))
+    can_edit = (user.role == UserRole.SUPER_ADMIN) or not locked
     return SuSoftConfigResponse(
         api_url=tenant.susoft_api_url,
         login=tenant.susoft_login,
@@ -661,6 +665,8 @@ async def get_susoft_config(
         connection_status=tenant.susoft_connection_status,
         last_check_at=tenant.susoft_last_check_at,
         last_error=tenant.susoft_last_error,
+        is_locked=locked,
+        can_edit=can_edit,
     )
 
 
@@ -669,9 +675,15 @@ async def update_susoft_config(
     payload: SuSoftConfigUpdate,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
-    _: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
+    user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
 ):
-    """Oppdater SuSoft-konfig. Passord lagres kryptert."""
+    """Oppdater SuSoft-konfig. Passord lagres kryptert. Låst konfig kan kun endres av SUPER_ADMIN."""
+    locked = bool(getattr(tenant, "susoft_config_locked", True))
+    if locked and user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Susoft-konfigurasjonen er låst. Kontakt support for å gjøre endringer."
+        )
     if payload.api_url is not None:
         tenant.susoft_api_url = payload.api_url.strip() or None
     if payload.login is not None:
@@ -683,6 +695,7 @@ async def update_susoft_config(
     tenant.susoft_connection_status = "unknown"
     db.commit()
     db.refresh(tenant)
+    can_edit = (user.role == UserRole.SUPER_ADMIN) or not locked
     return SuSoftConfigResponse(
         api_url=tenant.susoft_api_url,
         login=tenant.susoft_login,
@@ -691,6 +704,8 @@ async def update_susoft_config(
         connection_status=tenant.susoft_connection_status,
         last_check_at=tenant.susoft_last_check_at,
         last_error=tenant.susoft_last_error,
+        is_locked=locked,
+        can_edit=can_edit,
     )
 
 
@@ -823,6 +838,11 @@ class TenantSummary(BaseModel):
     subscription_status: Optional[str] = None
     user_count: int = 0
     susoft_connection_status: Optional[str] = None
+    susoft_config_locked: bool = True
+    susoft_has_password: bool = False
+    susoft_login: Optional[str] = None
+    susoft_shop_url_key: Optional[str] = None
+    susoft_api_url: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -877,6 +897,11 @@ async def list_tenants(
             subscription_status=t.subscription_status.value if t.subscription_status else None,
             user_count=user_counts.get(t.id, 0),
             susoft_connection_status=t.susoft_connection_status,
+            susoft_config_locked=bool(getattr(t, "susoft_config_locked", True)),
+            susoft_has_password=bool(t.susoft_password_encrypted),
+            susoft_login=t.susoft_login,
+            susoft_shop_url_key=t.susoft_shop_url_key,
+            susoft_api_url=t.susoft_api_url,
         ))
     return out
 
@@ -976,4 +1001,56 @@ async def update_tenant(
         subscription_status=tenant.subscription_status.value if tenant.subscription_status else None,
         user_count=user_count,
         susoft_connection_status=tenant.susoft_connection_status,
+        susoft_config_locked=bool(getattr(tenant, "susoft_config_locked", True)),
+        susoft_has_password=bool(tenant.susoft_password_encrypted),
+        susoft_login=tenant.susoft_login,
+        susoft_shop_url_key=tenant.susoft_shop_url_key,
+        susoft_api_url=tenant.susoft_api_url,
     )
+
+
+# =============================================================================
+# SUPER-ADMIN: ENDRE EN HVILKEN SOM HELST TENANTS SUSOFT-KONFIG
+# =============================================================================
+
+class TenantSusoftUpdate(BaseModel):
+    api_url: Optional[str] = Field(default=None, max_length=500)
+    login: Optional[str] = Field(default=None, max_length=255)
+    password: Optional[str] = Field(default=None, max_length=500)
+    shop_url_key: Optional[str] = Field(default=None, max_length=100)
+    config_locked: Optional[bool] = None  # None = uendret
+
+
+@router.put("/tenants/{tenant_id}/susoft-config")
+async def super_admin_update_tenant_susoft(
+    tenant_id: int,
+    payload: TenantSusoftUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """SUPER_ADMIN: oppdater Susoft-konfig for en hvilken som helst tenant + sett laas."""
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant ikke funnet")
+    if payload.api_url is not None:
+        tenant.susoft_api_url = payload.api_url.strip() or None
+    if payload.login is not None:
+        tenant.susoft_login = payload.login.strip() or None
+    if payload.shop_url_key is not None:
+        tenant.susoft_shop_url_key = payload.shop_url_key.strip() or None
+    if payload.password:
+        tenant.susoft_password_encrypted = encrypt_secret(payload.password)
+    if payload.config_locked is not None:
+        tenant.susoft_config_locked = bool(payload.config_locked)
+    tenant.susoft_connection_status = "unknown"
+    db.commit()
+    db.refresh(tenant)
+    return {
+        "tenant_id": tenant.id,
+        "susoft_api_url": tenant.susoft_api_url,
+        "susoft_login": tenant.susoft_login,
+        "susoft_shop_url_key": tenant.susoft_shop_url_key,
+        "susoft_has_password": bool(tenant.susoft_password_encrypted),
+        "susoft_config_locked": bool(tenant.susoft_config_locked),
+    }
+
