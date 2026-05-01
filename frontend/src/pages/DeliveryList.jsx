@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { 
   Calendar, RefreshCw, ChevronLeft, ChevronRight, 
   Truck, MapPin, Phone, Package, CheckCircle, 
-  Navigation, Printer, ExternalLink, Download, Tag
+  Navigation, Printer, ExternalLink, Download, Tag,
+  ArrowUp, ArrowDown
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { openPdf } from '../utils/pdf';
@@ -121,6 +122,37 @@ export default function DeliveryList() {
       await openPdf(authFetch, url);
     } catch (e) {
       setError(e.message || 'Klarte ikke åpne etiketter');
+    }
+  };
+
+  const moveStop = async (idx, direction) => {
+    if (!deliveryList?.stops || !selectedRoute) return;
+    const stops = [...deliveryList.stops];
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= stops.length) return;
+    // Optimistisk swap i UI
+    [stops[idx], stops[newIdx]] = [stops[newIdx], stops[idx]];
+    stops.forEach((s, i) => { s.stop_number = i + 1; });
+    setDeliveryList({ ...deliveryList, stops });
+    // Lagre rekkefolgen til backend
+    try {
+      const customerOrder = stops.map(s => s.customer_id).filter(Boolean);
+      const dateStr = formatDateISO(selectedDate);
+      const r = await authFetch(
+        `/api/v1/routes/${selectedRoute.id}/reorder?target_date=${dateStr}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(customerOrder),
+        }
+      );
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || 'Kunne ikke lagre rekkefølge');
+      }
+    } catch (err) {
+      setError(err.message);
+      fetchDeliveryList(); // hent paa nytt for aa rulle tilbake
     }
   };
 
@@ -264,11 +296,27 @@ export default function DeliveryList() {
                 className="card print:break-inside-avoid print:shadow-none print:border print:p-3"
               >
                 <div className="flex items-start gap-4">
-                  {/* Stop Number */}
-                  <div className="flex-shrink-0">
+                  {/* Stop Number + reorder */}
+                  <div className="flex-shrink-0 flex flex-col items-center gap-1">
+                    <button
+                      onClick={() => moveStop(idx, -1)}
+                      disabled={idx === 0}
+                      className="p-0.5 text-gray-400 hover:text-amber-600 disabled:opacity-20 disabled:cursor-not-allowed print:hidden"
+                      title="Flytt opp"
+                    >
+                      <ArrowUp className="w-3.5 h-3.5" />
+                    </button>
                     <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center text-lg font-bold">
                       {stop.stop_number}
                     </div>
+                    <button
+                      onClick={() => moveStop(idx, 1)}
+                      disabled={idx === deliveryList.stops.length - 1}
+                      className="p-0.5 text-gray-400 hover:text-amber-600 disabled:opacity-20 disabled:cursor-not-allowed print:hidden"
+                      title="Flytt ned"
+                    >
+                      <ArrowDown className="w-3.5 h-3.5" />
+                    </button>
                   </div>
 
                   {/* Customer Info */}
