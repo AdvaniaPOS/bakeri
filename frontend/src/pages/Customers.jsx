@@ -144,7 +144,7 @@ export default function Customers() {
     }
   };
 
-  if (loading) {
+  if (loading && customers.length === 0) {
     return (
       <div className="p-8 flex items-center justify-center">
         <RefreshCw className="w-6 h-6 animate-spin text-amber-600" />

@@ -185,7 +185,7 @@ export default function Products() {
     return filteredProducts.slice(start, start + pageSize);
   }, [filteredProducts, page, pageSize]);
 
-  if (loading) {
+  if (loading && products.length === 0) {
     return (
       <div className="p-8 flex items-center justify-center">
         <RefreshCw className="w-6 h-6 animate-spin text-amber-600" />

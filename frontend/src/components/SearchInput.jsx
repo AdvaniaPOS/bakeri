@@ -32,12 +32,20 @@ export default function SearchInput({
   const [touched, setTouched] = useState(false);
   const debounceRef = useRef(null);
   const lastSentRef = useRef(null); // null = ikke sendt enda; '' = sendt tom
+  const didMountRef = useRef(false);
   const onSearchRef = useRef(onSearch);
   useEffect(() => { onSearchRef.current = onSearch; }, [onSearch]);
 
   // Debounced trigger - bevisst IKKE avhengig av onSearch (bruker ref)
   // for aa unngaa loop naar foreldren sender ny callback hver render.
   useEffect(() => {
+    // Hopp over foerste mount slik at vi ikke trigger onSearch('') paa load.
+    // Foreldren har som regel allerede gjort initiell henting.
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      lastSentRef.current = (value || '').trim();
+      return;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const trimmed = (value || '').trim();
     debounceRef.current = setTimeout(() => {
