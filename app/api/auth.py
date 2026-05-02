@@ -40,6 +40,23 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 # =============================================================================
+# HELPERS
+# =============================================================================
+
+def _tenant_to_dict(tenant) -> dict:
+    """Bygger tenant-payload for login/register-respons med branding."""
+    return {
+        "id": tenant.id,
+        "name": tenant.name,
+        "slug": tenant.slug,
+        "subscription_plan": tenant.subscription_plan.value if tenant.subscription_plan else None,
+        "logo_url": getattr(tenant, "logo_url", None),
+        "primary_color": getattr(tenant, "primary_color", None),
+        "features_enabled": getattr(tenant, "features_enabled", None) or {},
+    }
+
+
+# =============================================================================
 # REQUEST/RESPONSE SCHEMAS
 # =============================================================================
 
@@ -118,6 +135,10 @@ class TenantResponse(BaseModel):
     subscription_plan: str
     subscription_status: str
     is_active: bool
+    logo_url: Optional[str] = None
+    primary_color: Optional[str] = None
+    features_enabled: Optional[dict] = None
+    settings: Optional[dict] = None
 
 
 # =============================================================================
@@ -174,12 +195,7 @@ async def login(
                     "name": local_user.full_name,
                     "role": local_user.role.value,
                 },
-                tenant={
-                    "id": tenant.id,
-                    "name": tenant.name,
-                    "slug": tenant.slug,
-                    "subscription_plan": tenant.subscription_plan.value,
-                },
+                tenant=_tenant_to_dict(tenant),
             )
         else:
             raise HTTPException(
@@ -312,12 +328,7 @@ async def login(
             "name": user.full_name,
             "role": user.role.value,
         },
-        tenant={
-            "id": tenant.id,
-            "name": tenant.name,
-            "slug": tenant.slug,
-            "subscription_plan": tenant.subscription_plan.value,
-        },
+        tenant=_tenant_to_dict(tenant),
     )
 
 
@@ -446,12 +457,7 @@ async def register_tenant(
             "name": user.name,
             "role": user.role.value
         },
-        tenant={
-            "id": tenant.id,
-            "name": tenant.name,
-            "slug": tenant.slug,
-            "subscription_plan": tenant.subscription_plan.value
-        }
+        tenant=_tenant_to_dict(tenant)
     )
 
 
@@ -482,7 +488,11 @@ async def get_current_tenant_info(tenant: CurrentTenant):
         slug=tenant.slug,
         subscription_plan=tenant.subscription_plan.value,
         subscription_status=tenant.subscription_status.value,
-        is_active=tenant.is_active
+        is_active=tenant.is_active,
+        logo_url=tenant.logo_url,
+        primary_color=tenant.primary_color,
+        features_enabled=tenant.features_enabled or {},
+        settings=tenant.settings or {},
     )
 
 
@@ -678,12 +688,7 @@ async def accept_invitation(
             "name": user.name,
             "role": user.role.value
         },
-        tenant={
-            "id": tenant.id,
-            "name": tenant.name,
-            "slug": tenant.slug,
-            "subscription_plan": tenant.subscription_plan.value
-        }
+        tenant=_tenant_to_dict(tenant)
     )
 
 

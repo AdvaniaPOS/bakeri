@@ -326,6 +326,15 @@ export function AuthProvider({ children }) {
     return hasRole('SUPER_ADMIN', 'TENANT_ADMIN');
   }, [hasRole]);
 
+  // Oppdater tenant-objekt lokalt + i localStorage (brukes f.eks. etter branding-endring)
+  const updateTenant = useCallback((patch) => {
+    setTenant((prev) => {
+      const next = { ...(prev || {}), ...(patch || {}) };
+      try { localStorage.setItem(TENANT_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
   const value = {
     user,
     tenant,
@@ -343,6 +352,7 @@ export function AuthProvider({ children }) {
     notification,
     dismissNotification,
     triggerHorizonCheck,
+    updateTenant,
   };
 
   return (

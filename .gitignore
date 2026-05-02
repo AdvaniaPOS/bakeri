@@ -1,5 +1,6 @@
 # Environment variables (contains secrets)
 .env
+resend_info.md
 
 # Python
 __pycache__/

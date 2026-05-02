@@ -8,7 +8,7 @@ Handles:
 - Alerts
 - Audit logs
 """
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
@@ -20,6 +20,7 @@ from ..auth_models import Tenant, User, UserRole, SubscriptionStatus, Subscripti
 from ..auth import get_password_hash
 from ..dependencies import get_current_user, get_current_tenant, require_role
 from ..crypto_utils import encrypt_secret
+from ..email_utils import send_tenant_welcome
 from ..models import (
     Order, Holiday, CustomerBlockedDate, AdminAlert, AuditLog,
     OrderStatus, SyncStatus, AuditAction
@@ -951,6 +952,17 @@ async def create_tenant(
     db.commit()
     db.refresh(tenant)
 
+    # Send velkomst-e-post (faller tilbake til logging hvis RESEND_API_KEY mangler)
+    try:
+        send_tenant_welcome(
+            to_email=payload.admin_email,
+            tenant_name=tenant.name,
+            admin_email=payload.admin_email,
+            temp_password=payload.admin_password,
+        )
+    except Exception:
+        pass
+
     return TenantSummary(
         id=tenant.id,
         slug=tenant.slug,
@@ -1102,6 +1114,143 @@ async def impersonate_tenant(
             "slug": target_tenant.slug,
         },
     }
+
+
+# =============================================================================
+# SUPER-ADMIN: SLETT TENANT (soft / hard)
+# =============================================================================
+
+@router.delete("/tenants/{tenant_id}", status_code=200)
+async def delete_tenant(
+    tenant_id: int,
+    hard: bool = Query(default=False, description="True = permanent slett (alle data)"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """
+    Slett tenant.
+
+    - hard=False (default): soft delete - tenant deaktiveres og markeres slettet,
+      men data bevares i 30 dager for restore.
+    - hard=True: PERMANENT slett av tenant og ALLE relaterte data
+      (kunder, produkter, ordrer, brukere). Kan ikke angres.
+    """
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant ikke funnet")
+
+    if hard:
+        # Cascade-delete via relationships (users) + alle tenant-scoped tabeller
+        db.delete(tenant)
+        db.commit()
+        return {"deleted": True, "hard": True, "tenant_id": tenant_id}
+
+    # Soft delete
+    tenant.is_active = False
+    tenant.is_deleted = True
+    tenant.deleted_at = datetime.utcnow()
+    tenant.subscription_status = SubscriptionStatus.CANCELLED
+    db.commit()
+    return {
+        "deleted": True,
+        "hard": False,
+        "tenant_id": tenant_id,
+        "restore_until": (datetime.utcnow() + timedelta(days=30)).isoformat(),
+    }
+
+
+@router.post("/tenants/{tenant_id}/restore", status_code=200)
+async def restore_tenant(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """Gjenopprett soft-deleted tenant."""
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant ikke funnet")
+    tenant.is_deleted = False
+    tenant.deleted_at = None
+    tenant.is_active = True
+    db.commit()
+    return {"restored": True, "tenant_id": tenant_id}
+
+
+# =============================================================================
+# TENANT: BRANDING (logo, farge, navn)  -- TENANT_ADMIN kan endre egne
+# =============================================================================
+
+class TenantBrandingUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=255)
+    logo_url: Optional[str] = Field(default=None, max_length=500)
+    primary_color: Optional[str] = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+
+
+@router.patch("/tenant/branding")
+async def update_own_tenant_branding(
+    payload: TenantBrandingUpdate,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    TENANT_ADMIN kan oppdatere egen tenants branding (navn, logo, farge).
+    """
+    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN):
+        raise HTTPException(status_code=403, detail="Krever tenant_admin")
+
+    if payload.name is not None:
+        tenant.name = payload.name
+    if payload.logo_url is not None:
+        tenant.logo_url = payload.logo_url.strip() or None
+    if payload.primary_color is not None:
+        tenant.primary_color = payload.primary_color
+    db.commit()
+    db.refresh(tenant)
+    return {
+        "id": tenant.id,
+        "name": tenant.name,
+        "logo_url": tenant.logo_url,
+        "primary_color": tenant.primary_color,
+    }
+
+
+# =============================================================================
+# SUPER-ADMIN: FEATURE FLAGS PER TENANT
+# =============================================================================
+
+class TenantFeaturesUpdate(BaseModel):
+    features: dict = Field(default_factory=dict)
+
+
+@router.put("/tenants/{tenant_id}/features")
+async def update_tenant_features(
+    tenant_id: int,
+    payload: TenantFeaturesUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """SUPER_ADMIN: sett feature flags for en tenant. Erstatter hele dict-en."""
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant ikke funnet")
+    # Sanitize: kun bool-verdier
+    clean = {k: bool(v) for k, v in (payload.features or {}).items() if isinstance(k, str)}
+    tenant.features_enabled = clean
+    db.commit()
+    return {"tenant_id": tenant_id, "features_enabled": clean}
+
+
+@router.get("/tenants/{tenant_id}/features")
+async def get_tenant_features(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant ikke funnet")
+    return {"tenant_id": tenant_id, "features_enabled": tenant.features_enabled or {}}
 
 
 # =============================================================================

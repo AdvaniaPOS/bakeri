@@ -103,9 +103,20 @@ export default function Layout() {
           <Menu className="w-5 h-5" />
         </button>
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-6 h-6 bg-amber-600 rounded-md flex items-center justify-center shadow-sm flex-shrink-0">
-            <Croissant className="w-3.5 h-3.5 text-white" />
-          </div>
+          {tenant?.logo_url ? (
+            <img
+              src={tenant.logo_url}
+              alt=""
+              className="w-6 h-6 rounded-md object-cover flex-shrink-0 shadow-sm"
+            />
+          ) : (
+            <div
+              className="w-6 h-6 rounded-md flex items-center justify-center shadow-sm flex-shrink-0"
+              style={{ backgroundColor: tenant?.primary_color || '#d97706' }}
+            >
+              <Croissant className="w-3.5 h-3.5 text-white" />
+            </div>
+          )}
           <span className="text-sm font-semibold text-gray-900 truncate">{tenant?.name || 'Bakeri'}</span>
         </div>
         <button
@@ -134,9 +145,20 @@ export default function Layout() {
       >
         {/* Logo / tenant */}
         <div className="px-4 py-3 flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-amber-600 rounded-md flex items-center justify-center shadow-sm">
-            <Croissant className="w-4.5 h-4.5 text-white" />
-          </div>
+          {tenant?.logo_url ? (
+            <img
+              src={tenant.logo_url}
+              alt=""
+              className="w-8 h-8 rounded-md object-cover shadow-sm"
+            />
+          ) : (
+            <div
+              className="w-8 h-8 rounded-md flex items-center justify-center shadow-sm"
+              style={{ backgroundColor: tenant?.primary_color || '#d97706' }}
+            >
+              <Croissant className="w-4.5 h-4.5 text-white" />
+            </div>
+          )}
           <div className="min-w-0 flex-1">
             <h1 className="text-sm font-semibold text-gray-900 truncate" title={tenant?.name || 'Bakeri'}>
               {tenant?.name || 'Bakeri'}

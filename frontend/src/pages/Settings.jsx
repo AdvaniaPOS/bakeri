@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock } from 'lucide-react';
+import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Settings() {
-  const { authFetch, user } = useAuth();
+  const { authFetch, user, tenant, updateTenant, isAdmin } = useAuth();
   const [syncStatus, setSyncStatus] = useState({ customers: null, products: null });
   const [syncing, setSyncing] = useState({ customers: false, products: false });
   const [connectionStatus, setConnectionStatus] = useState(null);
@@ -34,6 +34,50 @@ export default function Settings() {
   const [horizonStatus, setHorizonStatus] = useState(null);
   const [triggeringHorizon, setTriggeringHorizon] = useState(false);
   const [horizonMessage, setHorizonMessage] = useState(null);
+
+  // Branding (logo, primaerfarge, navn)
+  const [branding, setBranding] = useState({
+    name: tenant?.name || '',
+    logo_url: tenant?.logo_url || '',
+    primary_color: tenant?.primary_color || '#d97706',
+  });
+  const [savingBranding, setSavingBranding] = useState(false);
+  const [brandingMessage, setBrandingMessage] = useState(null);
+  useEffect(() => {
+    setBranding({
+      name: tenant?.name || '',
+      logo_url: tenant?.logo_url || '',
+      primary_color: tenant?.primary_color || '#d97706',
+    });
+  }, [tenant?.name, tenant?.logo_url, tenant?.primary_color]);
+
+  const saveBranding = async () => {
+    setSavingBranding(true);
+    setBrandingMessage(null);
+    try {
+      const resp = await authFetch('/api/v1/admin/tenant/branding', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: branding.name?.trim() || null,
+          logo_url: branding.logo_url?.trim() || null,
+          primary_color: branding.primary_color?.trim() || null,
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.detail || 'Lagring feilet');
+      updateTenant({
+        name: branding.name || tenant?.name,
+        logo_url: branding.logo_url || null,
+        primary_color: branding.primary_color || null,
+      });
+      setBrandingMessage({ success: true, text: 'Branding oppdatert' });
+    } catch (e) {
+      setBrandingMessage({ success: false, text: e.message });
+    } finally {
+      setSavingBranding(false);
+    }
+  };
 
   // Last inn konfig ved mount
   useEffect(() => {
@@ -382,6 +426,92 @@ export default function Settings() {
             </div>
           </div>
         </div>
+
+        {/* Branding (kun TENANT_ADMIN+) */}
+        {isAdmin() && (
+          <div className="card">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                <ImageIcon className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-gray-900">Branding</h2>
+                <p className="text-sm text-gray-500">Tilpass navn, logo og farge p&aring; portalen</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2 flex items-center gap-4">
+                {branding.logo_url ? (
+                  <img src={branding.logo_url} alt="" className="w-16 h-16 rounded-lg object-cover border border-gray-200" />
+                ) : (
+                  <div
+                    className="w-16 h-16 rounded-lg flex items-center justify-center text-white text-xl font-bold"
+                    style={{ backgroundColor: branding.primary_color || '#d97706' }}
+                  >
+                    {(branding.name || 'B').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="text-sm text-gray-500">Forh&aring;ndsvisning av logo / fargem&aelig;rke i sidemenyen.</div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bakerinavn</label>
+                <input
+                  type="text"
+                  value={branding.name}
+                  onChange={e => setBranding(b => ({ ...b, name: e.target.value }))}
+                  className="input"
+                  placeholder="Lampeland Bakeri"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Prim&aelig;rfarge</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={branding.primary_color || '#d97706'}
+                    onChange={e => setBranding(b => ({ ...b, primary_color: e.target.value }))}
+                    className="w-12 h-10 rounded border border-gray-300 cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={branding.primary_color || ''}
+                    onChange={e => setBranding(b => ({ ...b, primary_color: e.target.value }))}
+                    className="input"
+                    placeholder="#d97706"
+                  />
+                </div>
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Logo-URL</label>
+                <input
+                  type="url"
+                  value={branding.logo_url}
+                  onChange={e => setBranding(b => ({ ...b, logo_url: e.target.value }))}
+                  className="input"
+                  placeholder="https://..."
+                />
+                <p className="text-xs text-gray-500 mt-1">Lim inn lenke til logoen din (PNG, SVG, JPG). La st&aring; tomt for &aring; bruke fargem&aelig;rke.</p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                onClick={saveBranding}
+                disabled={savingBranding}
+                className="btn btn-primary"
+              >
+                {savingBranding ? <><RefreshCw className="w-4 h-4 animate-spin" /> Lagrer...</> : <><Save className="w-4 h-4" /> Lagre branding</>}
+              </button>
+              {brandingMessage && (
+                <span className={`text-sm flex items-center gap-1 ${brandingMessage.success ? 'text-green-700' : 'text-red-700'}`}>
+                  {brandingMessage.success ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                  {brandingMessage.text}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Bakeri-innstillinger */}
         <div className="card">
