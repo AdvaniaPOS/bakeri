@@ -202,6 +202,7 @@ async def health_check():
 
 
 @app.get("/health/detailed")
+@app.get("/api/v1/health/detailed")
 async def health_detailed():
     """
     Detaljert helsesjekk: database, e-post-konfig, Susoft (hvis aktivert).

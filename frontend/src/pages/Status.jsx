@@ -19,7 +19,7 @@ export default function Status() {
     setLoading(true);
     setError(null);
     try {
-      const resp = await authFetch('/health/detailed');
+      const resp = await authFetch('/api/v1/health/detailed');
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       setData(await resp.json());
     } catch (e) {
