@@ -110,7 +110,7 @@ def send_email(
 # Hoyere-niva sjablongen for vanlige e-poster
 # =============================================================================
 
-def _wrap_html(body: str, brand: str = "Lampeland Bakeri") -> str:
+def _wrap_html(body: str, brand: str = "Advania Bakeri") -> str:
     return f"""\
 <!DOCTYPE html>
 <html lang="no">

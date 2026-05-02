@@ -178,7 +178,7 @@ export default function Register() {
                     value={formData.tenantName}
                     onChange={handleChange}
                     className="input w-full"
-                    placeholder="F.eks. Lampeland Bakeri"
+                    placeholder="F.eks. Mitt Bakeri AS"
                   />
                 </div>
 
@@ -199,7 +199,7 @@ export default function Register() {
                       value={formData.tenantSlug}
                       onChange={handleChange}
                       className="input flex-1 rounded-l-none"
-                      placeholder="lampeland-bakeri"
+                      placeholder="mitt-bakeri"
                     />
                   </div>
                   <p className="mt-1 text-xs text-gray-500">
@@ -346,7 +346,7 @@ export default function Register() {
 
         {/* Footer */}
         <p className="mt-8 text-center text-sm text-gray-500">
-          © 2026 Bakeri Ordresystem. Alle rettigheter reservert.
+          © 2026 Advania Bakeri. Alle rettigheter reservert.
         </p>
       </div>
     </div>

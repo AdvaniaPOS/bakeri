@@ -300,8 +300,10 @@ async def login(
     # --- Ensure tenant row exists ---
     tenant = db.query(Tenant).filter(Tenant.slug == shop_key).first()
     if not tenant:
+        # Bruk shop_key som default navn — kan endres av admin senere
+        default_name = shop_key.replace("-", " ").replace("_", " ").title() if shop_key else "Bakeri"
         tenant = Tenant(
-            name="Lampeland Bakeri",
+            name=default_name,
             slug=shop_key,
             email=susoft_user_email,
             country="NO",
@@ -904,7 +906,11 @@ async def two_factor_setup(
     current_user.totp_enabled = False
     db.commit()
 
-    uri = provisioning_uri(secret, account_name=current_user.email)
+    uri = provisioning_uri(
+        secret,
+        account_name=current_user.email,
+        issuer=(current_user.tenant.name if current_user.tenant else "Advania Bakeri"),
+    )
     return {"secret": secret, "otpauth_uri": uri}
 
 

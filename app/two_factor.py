@@ -25,8 +25,12 @@ def decrypt_totp_secret(stored: Optional[str]) -> Optional[str]:
     return decrypt_secret(stored)
 
 
-def provisioning_uri(secret: str, account_name: str, issuer: str = "Lampeland Bakeri") -> str:
-    """Bygg otpauth://-URI for Authenticator-app."""
+def provisioning_uri(secret: str, account_name: str, issuer: str = "Advania Bakeri") -> str:
+    """Bygg otpauth://-URI for Authenticator-app.
+
+    `issuer` vises i autentiserings-appen — bruk tenant-navn for at sluttbruker
+    skal kjenne igjen kontoen.
+    """
     return pyotp.TOTP(secret).provisioning_uri(name=account_name, issuer_name=issuer)
 
 

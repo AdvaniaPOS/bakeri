@@ -74,7 +74,7 @@ export default function Login() {
               />
             </svg>
           </div>
-          <h1 className="text-xl font-semibold text-gray-900">Bakeri Ordresystem</h1>
+          <h1 className="text-xl font-semibold text-gray-900">Advania Bakeri</h1>
           <p className="mt-1 text-sm text-gray-500">Logg inn for å fortsette</p>
         </div>
 
@@ -216,7 +216,7 @@ export default function Login() {
 
         {/* Footer */}
         <p className="mt-8 text-center text-sm text-gray-500">
-          © 2026 Bakeri Ordresystem. Alle rettigheter reservert.
+          © 2026 Advania Bakeri. Alle rettigheter reservert.
         </p>
       </div>
     </div>

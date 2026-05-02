@@ -188,7 +188,7 @@ app.include_router(driver.router, prefix="/api/v1")
 async def root():
     """Root endpoint with API info."""
     return {
-        "name": "Lampeland Bakeri - Ordresystem",
+        "name": "Advania Bakeri - Ordresystem",
         "version": "1.0.0",
         "docs": "/docs",
         "redoc": "/redoc"

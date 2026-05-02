@@ -615,7 +615,7 @@ def send_alert_emails():
         smtp_port = int(os.getenv("SMTP_PORT", "587"))
         smtp_user = os.getenv("SMTP_USER", "")
         smtp_pass = os.getenv("SMTP_PASS", "")
-        from_email = os.getenv("ALERT_FROM_EMAIL", "alerts@lampeland-bakeri.no")
+        from_email = os.getenv("ALERT_FROM_EMAIL", "alerts@advania-bakeri.no")
         
         sent_count = 0
         
@@ -629,7 +629,7 @@ def send_alert_emails():
                 continue
             
             body = f"""
-LAMPELAND BAKERI - SYSTEM ALERT
+ADVANIA BAKERI - SYSTEM ALERT
 
 Severity: {alert.severity.upper()}
 Type: {alert.alert_type}
@@ -641,7 +641,7 @@ Type: {alert.alert_type}
 Time: {alert.created_at}
 
 ---
-This is an automated alert from Lampeland Bakeri Ordresystem.
+This is an automated alert from Advania Bakeri Ordresystem.
             """
             
             msg = MIMEText(body)

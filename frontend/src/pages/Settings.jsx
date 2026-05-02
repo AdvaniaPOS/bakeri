@@ -258,7 +258,7 @@ export default function Settings() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Innstillinger</h1>
-          <p className="page-subtitle">Konfigurer systemet for Lampeland Bakeri</p>
+          <p className="page-subtitle">{tenant?.name ? `Konfigurer systemet for ${tenant.name}` : 'Konfigurer systemet'}</p>
         </div>
       </div>
 
