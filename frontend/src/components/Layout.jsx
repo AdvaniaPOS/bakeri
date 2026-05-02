@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   TrendingDown,
   History,
+  Activity,
   Moon,
   Sun,
   Menu,
@@ -41,6 +42,7 @@ const navigation = [
 
 const superAdminNavigation = [
   { name: 'Kunder / Portaler', href: '/admin/tenants', icon: Building2 },
+  { name: 'Systemstatus', href: '/status', icon: Activity },
 ];
 
 export default function Layout() {

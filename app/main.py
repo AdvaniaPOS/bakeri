@@ -199,3 +199,40 @@ async def root():
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/health/detailed")
+async def health_detailed():
+    """
+    Detaljert helsesjekk: database, e-post-konfig, Susoft (hvis aktivert).
+    Brukes av status-side. Krever ingen autentisering, men returnerer
+    minimal info for ikke å lekke detaljer.
+    """
+    from sqlalchemy import text
+    from .database import SessionLocal
+
+    result = {
+        "status": "healthy",
+        "checks": {},
+    }
+
+    # Database
+    try:
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+        result["checks"]["database"] = {"status": "ok"}
+    except Exception as e:
+        result["checks"]["database"] = {"status": "error", "error": str(e)[:200]}
+        result["status"] = "degraded"
+
+    # E-post (Resend)
+    if os.getenv("RESEND_API_KEY", "").strip():
+        result["checks"]["email"] = {"status": "ok", "provider": "resend"}
+    else:
+        result["checks"]["email"] = {"status": "warning", "detail": "RESEND_API_KEY ikke satt — e-post går til logg"}
+
+    # Sentry
+    result["checks"]["sentry"] = {"status": "ok" if _SENTRY_DSN else "disabled"}
+
+    return result

@@ -249,6 +249,13 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     last_login_ip: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # 2FA (TOTP)
+    totp_secret: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True,
+        comment="Base32 TOTP-secret, kryptert via app/crypto_utils.py."
+    )
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
     # Preferences (JSON)
     preferences: Mapped[Optional[dict]] = mapped_column(

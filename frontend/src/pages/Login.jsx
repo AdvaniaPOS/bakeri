@@ -19,6 +19,8 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [twoFactorRequired, setTwoFactorRequired] = useState(false);
+  const [totpCode, setTotpCode] = useState('');
   const [localError, setLocalError] = useState(null);
   const [theme, setTheme] = useState(getStoredTheme);
   useEffect(() => { applyTheme(theme); }, [theme]);
@@ -32,10 +34,13 @@ export default function Login() {
       return;
     }
 
-    const result = await login(email, password);
-    
+    const result = await login(email, password, totpCode || undefined);
+
     if (result.success) {
       navigate('/');
+    } else if (result.twoFactorRequired) {
+      setTwoFactorRequired(true);
+      setLocalError('Skriv inn 2FA-koden fra autentiseringsappen din');
     } else {
       setLocalError(result.error);
     }
@@ -136,6 +141,29 @@ export default function Login() {
                 </button>
               </div>
             </div>
+
+            {/* 2FA-kode (vises kun når server krever det) */}
+            {twoFactorRequired && (
+              <div>
+                <label htmlFor="totp" className="block text-sm font-medium text-gray-700 mb-1">
+                  2FA-kode
+                </label>
+                <input
+                  id="totp"
+                  name="totp"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={8}
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
+                  className="input w-full tracking-widest text-center font-mono"
+                  placeholder="123456"
+                  autoFocus
+                />
+                <p className="text-xs text-gray-500 mt-1">6-sifret kode fra autentiseringsappen din</p>
+              </div>
+            )}
 
             {/* Remember me & Forgot password */}
             <div className="flex items-center justify-between">

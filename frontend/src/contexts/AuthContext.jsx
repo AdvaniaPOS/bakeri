@@ -123,7 +123,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   // Login function
-  const login = useCallback(async (email, password) => {
+  const login = useCallback(async (email, password, totp_code) => {
     setError(null);
     setLoading(true);
 
@@ -133,12 +133,15 @@ export function AuthProvider({ children }) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, totp_code: totp_code || null }),
       });
 
       const data = await parseResponseSafely(response);
 
       if (!response.ok) {
+        if (response.headers.get('X-2FA-Required') === 'true') {
+          return { success: false, twoFactorRequired: true };
+        }
         throw new Error(data?.detail || 'Login failed');
       }
 

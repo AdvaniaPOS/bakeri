@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon, Download } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import TwoFactorCard from '../components/TwoFactorCard';
 
 export default function Settings() {
   const { authFetch, user, tenant, updateTenant, isAdmin } = useAuth();
@@ -552,6 +553,9 @@ export default function Settings() {
             </p>
           </div>
         )}
+
+        {/* 2FA / TOTP */}
+        <TwoFactorCard authFetch={authFetch} />
 
         {/* Bakeri-innstillinger */}
         <div className="card">

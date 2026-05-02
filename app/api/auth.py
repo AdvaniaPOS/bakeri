@@ -65,6 +65,7 @@ class LoginRequest(BaseModel):
     """Login request with SuSoft login (email or username) and password."""
     email: str = Field(..., min_length=1)
     password: str
+    totp_code: Optional[str] = Field(default=None, min_length=6, max_length=8)
 
 
 class LoginResponse(BaseModel):
@@ -175,7 +176,23 @@ async def login(
             tenant = local_user.tenant or db.query(Tenant).filter(Tenant.id == local_user.tenant_id).first()
             if not tenant:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tenant not found")
-            
+
+            # 2FA: hvis aktivert, krev gyldig TOTP-kode
+            if local_user.totp_enabled and local_user.totp_secret:
+                if not request.totp_code:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="2FA-kode kreves",
+                        headers={"X-2FA-Required": "true"},
+                    )
+                from ..two_factor import decrypt_totp_secret, verify_totp
+                secret = decrypt_totp_secret(local_user.totp_secret)
+                if not secret or not verify_totp(secret, request.totp_code):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Ugyldig 2FA-kode",
+                    )
+
             token_pair = create_token_pair(
                 user_id=local_user.id,
                 tenant_id=local_user.tenant_id,
@@ -762,3 +779,78 @@ async def revoke_invitation(
     db.commit()
     
     return {"message": "Invitation revoked"}
+
+
+# =============================================================================
+# 2FA / TOTP
+# =============================================================================
+
+class TwoFactorEnableRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=8)
+
+
+class TwoFactorDisableRequest(BaseModel):
+    password: str = Field(..., min_length=1)
+
+
+@router.post("/2fa/setup")
+async def two_factor_setup(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Start 2FA-oppsett: generer ny secret og returner provisioning-URI.
+    Secret lagres kryptert, men ikke aktivert (totp_enabled=False)
+    før brukeren bekrefter med /2fa/enable.
+    """
+    from ..two_factor import generate_totp_secret, encrypt_totp_secret, provisioning_uri
+
+    secret = generate_totp_secret()
+    current_user.totp_secret = encrypt_totp_secret(secret)
+    current_user.totp_enabled = False
+    db.commit()
+
+    uri = provisioning_uri(secret, account_name=current_user.email)
+    return {"secret": secret, "otpauth_uri": uri}
+
+
+@router.post("/2fa/enable")
+async def two_factor_enable(
+    payload: TwoFactorEnableRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bekreft 2FA-oppsett ved å sende inn gyldig kode."""
+    from ..two_factor import decrypt_totp_secret, verify_totp
+
+    if not current_user.totp_secret:
+        raise HTTPException(status_code=400, detail="2FA-oppsett ikke startet")
+    secret = decrypt_totp_secret(current_user.totp_secret)
+    if not secret or not verify_totp(secret, payload.code):
+        raise HTTPException(status_code=400, detail="Ugyldig kode")
+    current_user.totp_enabled = True
+    db.commit()
+    return {"enabled": True}
+
+
+@router.post("/2fa/disable")
+async def two_factor_disable(
+    payload: TwoFactorDisableRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Slå av 2FA. Krever passord-bekreftelse."""
+    if not current_user.password_hash or current_user.password_hash == "__susoft__":
+        raise HTTPException(status_code=400, detail="Ikke tilgjengelig for SuSoft-brukere")
+    if not verify_password(payload.password, current_user.password_hash):
+        raise HTTPException(status_code=401, detail="Feil passord")
+    current_user.totp_enabled = False
+    current_user.totp_secret = None
+    db.commit()
+    return {"enabled": False}
+
+
+@router.get("/2fa/status")
+async def two_factor_status(current_user: User = Depends(get_current_user)):
+    """Returner om 2FA er aktivert for innlogget bruker."""
+    return {"enabled": bool(current_user.totp_enabled)}

@@ -16,6 +16,7 @@ pydantic[email]>=2.5.0
 # Authentication
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
+pyotp>=2.9.0  # 2FA TOTP
 
 # Task Queue (for scheduled jobs and retries)
 celery>=5.3.0
