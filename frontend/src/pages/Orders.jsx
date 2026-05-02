@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Search, Filter, Plus, Eye, Edit2, Trash2, Truck, Clock, CheckCircle, XCircle, RefreshCw, Send, Loader2, X, Check, AlertTriangle, FileText, EyeOff, Undo2, Download } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -15,6 +15,7 @@ const statusConfig = {
 
 export default function Orders() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { authFetch } = useAuth();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -310,6 +311,19 @@ export default function Orders() {
   useEffect(() => {
     fetchOrders();
   }, [visibilityFilter]);
+
+  // Åpne edit-modal automatisk hvis ?edit=ID i URL (f.eks. fra Avvik-knapp på kunde)
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (editId) {
+      const id = parseInt(editId, 10);
+      if (!Number.isNaN(id)) setEditingOrderId(id);
+      // Fjern query-param så den ikke åpnes igjen ved navigasjon
+      const next = new URLSearchParams(searchParams);
+      next.delete('edit');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const filteredOrders = orders.filter(o => {
     const customerName = o.customer || '';

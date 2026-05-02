@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, Plus, Search, Loader2, AlertCircle, CheckCircle2, Trash2, Calendar } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { X, Plus, Search, Loader2, AlertCircle, CheckCircle2, Trash2, Calendar, Edit2, Info } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
@@ -33,6 +34,9 @@ export default function QuickOverrideModal({ customer, onClose, onSaved }) {
   const [error, setError] = useState(null);
   const [savedCount, setSavedCount] = useState(0);
   const [showPicker, setShowPicker] = useState(false);
+  const [existingOrder, setExistingOrder] = useState(null);
+  const [loadingOrder, setLoadingOrder] = useState(false);
+  const [orderLoaded, setOrderLoaded] = useState(false); // tracker om vi allerede har for-fyllt fra ordre
 
   // Hent produkter
   useEffect(() => {
@@ -57,6 +61,48 @@ export default function QuickOverrideModal({ customer, onClose, onSaved }) {
     for (const p of allProducts) m.set(p.id, p);
     return m;
   }, [allProducts]);
+
+  // Slå opp eksisterende ordre når kunde+dato endres
+  useEffect(() => {
+    if (!customer?.id || !overrideDate) {
+      setExistingOrder(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingOrder(true);
+    setOrderLoaded(false);
+    (async () => {
+      try {
+        const res = await authFetch(
+          `/api/v1/orders?customer_id=${customer.id}&from_date=${overrideDate}&to_date=${overrideDate}&page_size=5`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const order = (data.items || [])[0] || null;
+        setExistingOrder(order);
+      } catch {
+        /* ignore */
+      } finally {
+        if (!cancelled) setLoadingOrder(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [customer?.id, overrideDate, authFetch]);
+
+  // Forhåndsutfyll linjer fra eksisterende ordre (kun hvis brukeren ikke har lagt til noe selv)
+  const loadLinesFromOrder = () => {
+    if (!existingOrder?.lines) return;
+    const fromOrder = existingOrder.lines.map((l) => ({
+      product_id: l.product_id,
+      name: l.product_name || productById.get(l.product_id)?.name || `Produkt ${l.product_id}`,
+      sku: l.product_sku || productById.get(l.product_id)?.sku || '',
+      quantity: l.quantity,
+      reason: '',
+    }));
+    setLines(fromOrder);
+    setOrderLoaded(true);
+  };
 
   const pickerResults = useMemo(() => {
     const term = productSearch.trim().toLowerCase();
@@ -158,6 +204,54 @@ export default function QuickOverrideModal({ customer, onClose, onSaved }) {
                   Antall under erstatter fastbestilling for denne datoen. Sett 0 for å «droppe» et produkt.
                 </p>
               </div>
+
+              {/* Eksisterende ordre for valgt dato */}
+              {loadingOrder ? (
+                <div className="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Sjekker om det finnes ordre for denne datoen...
+                </div>
+              ) : existingOrder ? (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <div className="font-medium">
+                        Ordre #{existingOrder.id} finnes for {overrideDate}
+                      </div>
+                      <div className="text-xs text-blue-700 mt-0.5">
+                        {existingOrder.lines?.length || 0} linjer · status: {existingOrder.status}
+                        {existingOrder.is_locked ? ' · LÅST (etter cut-off)' : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {!orderLoaded && lines.length === 0 && (
+                      <button
+                        type="button"
+                        onClick={loadLinesFromOrder}
+                        className="text-xs px-3 py-1.5 bg-white border border-blue-300 rounded text-blue-700 hover:bg-blue-100 font-medium"
+                      >
+                        Last inn ordrelinjer som utgangspunkt
+                      </button>
+                    )}
+                    <Link
+                      to={`/bestillinger?edit=${existingOrder.id}`}
+                      onClick={onClose}
+                      className="text-xs px-3 py-1.5 bg-white border border-blue-300 rounded text-blue-700 hover:bg-blue-100 font-medium inline-flex items-center gap-1"
+                    >
+                      <Edit2 className="w-3 h-3" /> Åpne ordre i Bestillinger
+                    </Link>
+                  </div>
+                  <p className="text-[11px] text-blue-700 leading-snug">
+                    Tips: Avvik registrert her overstyrer fastbestillingen ved regenerering. For å endre den faktiske ordren nå,
+                    bruk «Rediger ordre»-knappen.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-2 text-xs text-gray-500">
+                  Ingen ordre funnet for denne datoen — avviket vil gjelde når ordren genereres.
+                </div>
+              )}
 
               {/* Globalt grunnlag */}
               <div>
