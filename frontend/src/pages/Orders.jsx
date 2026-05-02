@@ -726,6 +726,8 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
   const [customerNotes, setCustomerNotes] = useState('');
   const [showAddPicker, setShowAddPicker] = useState(false);
   const [pickerSearch, setPickerSearch] = useState('');
+  // Lokal state for quantity per linje, slik at vi unngår race mellom onBlur og Lagre.
+  const [pendingQtys, setPendingQtys] = useState({}); // {[lineId]: number}
 
   const load = async () => {
     setLoading(true);
@@ -743,6 +745,10 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
       setDeliveryDate(ord.delivery_date || '');
       setInternalNotes(ord.internal_notes || '');
       setCustomerNotes(ord.customer_notes || '');
+      // Initialiser lokale qty-verdier fra serveren
+      const qtyMap = {};
+      (ord.lines || []).forEach((l) => { qtyMap[l.id] = l.quantity; });
+      setPendingQtys(qtyMap);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -809,22 +815,38 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
   const saveHeader = async () => {
     setSaving(true);
     try {
+      // 1) Flush alle pending qty-endringer FØRST (await sekvensielt)
+      const lineEdits = (order?.lines || []).filter((l) => {
+        const newQty = pendingQtys[l.id];
+        return newQty != null && newQty !== l.quantity && newQty >= 1;
+      });
+      for (const l of lineEdits) {
+        const res = await authFetch(`/api/v1/orders/${orderId}/lines/${l.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quantity: pendingQtys[l.id] }),
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Kunne ikke lagre linje ${l.id}`);
+        }
+      }
+
+      // 2) Lagre header-felter
       const body = {};
       if (deliveryDate && deliveryDate !== order.delivery_date) body.delivery_date = deliveryDate;
       if (internalNotes !== (order.internal_notes || '')) body.internal_notes = internalNotes;
       if (customerNotes !== (order.customer_notes || '')) body.customer_notes = customerNotes;
-      if (Object.keys(body).length === 0) {
-        onSaved();
-        return;
-      }
-      const res = await authFetch(`/api/v1/orders/${orderId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || 'Kunne ikke lagre');
+      if (Object.keys(body).length > 0) {
+        const res = await authFetch(`/api/v1/orders/${orderId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || 'Kunne ikke lagre');
+        }
       }
       onSaved();
     } catch (e) {
@@ -995,13 +1017,13 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
                         <input
                           type="number"
                           min="1"
-                          defaultValue={line.quantity}
+                          value={pendingQtys[line.id] ?? line.quantity}
                           disabled={isLocked}
-                          onBlur={(e) => {
+                          onChange={(e) => {
                             const v = parseInt(e.target.value, 10);
-                            if (v && v !== line.quantity) updateLineQty(line, v);
+                            setPendingQtys((prev) => ({ ...prev, [line.id]: Number.isNaN(v) ? '' : v }));
                           }}
-                          className="input w-20 text-right"
+                          className={`input w-20 text-right ${pendingQtys[line.id] != null && pendingQtys[line.id] !== line.quantity ? 'border-amber-400 bg-amber-50' : ''}`}
                         />
                         <div className="w-24 text-right text-sm font-medium text-gray-900">
                           kr {Number(line.line_amount_incl_vat).toLocaleString('nb-NO', { minimumFractionDigits: 2 })}

@@ -26,11 +26,13 @@ from ..dependencies import get_current_tenant, get_current_user
 from ..auth_models import Tenant, User
 from ..models import (
     OrderDateOverride, Customer, Product, AuditLog, AuditAction,
+    Order, OrderLine, OrderStatus, SyncStatus,
 )
 from ..schemas import (
     OrderDateOverrideCreate, OrderDateOverrideResponse,
 )
 from ..tenant_scope import get_or_404
+from ..cutoff import is_order_locked
 
 router = APIRouter(prefix="/overrides", tags=["Order Overrides"])
 
@@ -101,6 +103,97 @@ def _ensure_customer_and_product(db: Session, tenant_id: int, customer_id: int, 
     cust = get_or_404(db, Customer, customer_id, tenant_id, "Customer not found")
     prod = get_or_404(db, Product, product_id, tenant_id, "Product not found")
     return cust, prod
+
+
+def _apply_overrides_to_existing_order(
+    db: Session,
+    tenant_id: int,
+    customer_id: int,
+    override_date: date,
+    overrides_by_product: dict,  # {product_id: (quantity, reason)}
+    products_by_id: dict,        # {product_id: Product}
+) -> Optional[int]:
+    """
+    Finn en eksisterende, ulåst, ikke-slettet ordre for (kunde, dato) og
+    anvend avvikene direkte på dens linjer.
+
+    - quantity > 0 og linje finnes  → oppdater quantity (+ recalc beløp)
+    - quantity > 0 og linje mangler → opprett ny linje med effektiv pris
+    - quantity == 0                  → slett linje hvis den finnes
+
+    Returnerer ordre-ID hvis det ble anvendt på en ordre, ellers None.
+    Stille no-op hvis ordre er låst (cut-off passert) eller ikke finnes.
+    """
+    from sqlalchemy.orm import selectinload as _sel
+    from .pricing import get_effective_price
+    from .orders import calculate_line_totals, recalculate_order_totals
+
+    order = db.execute(
+        select(Order)
+        .where(
+            Order.tenant_id == tenant_id,
+            Order.customer_id == customer_id,
+            Order.delivery_date == override_date,
+            Order.is_deleted == False,
+        )
+        .options(_sel(Order.lines))
+        .order_by(Order.id.desc())
+    ).scalars().first()
+
+    if order is None or is_order_locked(order):
+        return None
+
+    lines_by_product = {l.product_id: l for l in order.lines}
+
+    for product_id, (quantity, reason) in overrides_by_product.items():
+        existing_line = lines_by_product.get(product_id)
+        if quantity == 0:
+            if existing_line is not None:
+                db.delete(existing_line)
+            continue
+
+        product = products_by_id.get(product_id)
+        if product is None:
+            continue
+
+        if existing_line is not None:
+            if existing_line.original_template_quantity is None:
+                existing_line.original_template_quantity = existing_line.quantity
+            existing_line.quantity = quantity
+            existing_line.is_adhoc_quantity = True
+            if reason:
+                existing_line.notes = (reason or "")[:500]
+            excl, vat, incl = calculate_line_totals(quantity, existing_line.unit_price, existing_line.vat_rate)
+            existing_line.line_amount_excl_vat = excl
+            existing_line.line_vat = vat
+            existing_line.line_amount_incl_vat = incl
+        else:
+            unit_price, _, _ = get_effective_price(
+                db, customer_id, product_id, override_date, tenant_id=tenant_id
+            )
+            excl, vat, incl = calculate_line_totals(quantity, unit_price, product.vat_rate)
+            new_line = OrderLine(
+                tenant_id=tenant_id,
+                order_id=order.id,
+                product_id=product_id,
+                quantity=quantity,
+                unit_price=unit_price,
+                vat_rate=product.vat_rate,
+                line_amount_excl_vat=excl,
+                line_vat=vat,
+                line_amount_incl_vat=incl,
+                notes=(reason or None),
+                is_adhoc_quantity=True,
+            )
+            db.add(new_line)
+
+    db.flush()
+    db.refresh(order)
+    recalculate_order_totals(order)
+    order.is_adhoc_modified = True
+    if order.sync_status == SyncStatus.SYNCED:
+        order.sync_status = SyncStatus.PENDING
+    return order.id
 
 
 def _upsert(db: Session, tenant_id: int, customer_id: int, product_id: int,
@@ -205,6 +298,15 @@ async def bulk_upsert_overrides(
         )
         results.append(obj)
 
+    # --- Anvend avvikene direkte på en eventuell allerede-generert, ulåst ordre ---
+    # Slik unngår vi at brukeren registrerer avvik uten å se effekt på en
+    # eksisterende ordre for samme (kunde, dato).
+    applied_to_order_id = _apply_overrides_to_existing_order(
+        db, tenant.id, cust.id, data.override_date,
+        {ln.product_id: (ln.quantity, ln.reason) for ln in data.lines},
+        {p.id: p for p in products},
+    )
+
     db.add(AuditLog(
         tenant_id=tenant.id,
         entity_type="order_date_override",
@@ -215,6 +317,7 @@ async def bulk_upsert_overrides(
             "override_date": str(data.override_date),
             "lines": [{"product_id": l.product_id, "quantity": l.quantity} for l in data.lines],
             "bulk": True,
+            "applied_to_order_id": applied_to_order_id,
         },
         user_id=user.id,
     ))
