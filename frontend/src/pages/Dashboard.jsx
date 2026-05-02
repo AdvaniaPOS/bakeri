@@ -10,6 +10,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import OnboardingWizard from '../components/OnboardingWizard';
 
 const statusColors = {
   draft: 'badge-neutral',
@@ -143,6 +144,7 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      <OnboardingWizard />
       {/* Header */}
       <div className="page-header">
         <div>

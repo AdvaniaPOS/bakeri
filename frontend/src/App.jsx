@@ -19,6 +19,9 @@ import AuditLog from './pages/AuditLog';
 import Status from './pages/Status';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import AcceptInvitation from './pages/AcceptInvitation';
 import './index.css';
 
 // Redirect authenticated users away from login/register
@@ -52,6 +55,21 @@ function AppRoutes() {
       <Route path="/register" element={
         <PublicRoute>
           <Register />
+        </PublicRoute>
+      } />
+      <Route path="/glemt-passord" element={
+        <PublicRoute>
+          <ForgotPassword />
+        </PublicRoute>
+      } />
+      <Route path="/nullstill-passord" element={
+        <PublicRoute>
+          <ResetPassword />
+        </PublicRoute>
+      } />
+      <Route path="/aksepter-invitasjon" element={
+        <PublicRoute>
+          <AcceptInvitation />
         </PublicRoute>
       } />
       

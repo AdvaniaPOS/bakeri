@@ -7,7 +7,7 @@ Wrapper rundt `app.auth` (kjerne-utilities for hashing/JWT) og eksponerer:
 - Password reset
 - User invitation management
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
@@ -115,6 +115,17 @@ class AcceptInvitationRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     """Request to change password."""
     current_password: str
+    new_password: str = Field(..., min_length=8)
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Be om e-post med nullstillings-lenke."""
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    """Sett nytt passord vha token fra e-post."""
+    token: str = Field(..., min_length=10)
     new_password: str = Field(..., min_length=8)
 
 
@@ -552,6 +563,84 @@ async def change_password(
 
 
 # =============================================================================
+# GLEMT PASSORD / NULLSTILL PASSORD
+# =============================================================================
+
+@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+async def forgot_password(
+    request: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Be om e-post med lenke for å nullstille passord.
+
+    Returnerer alltid 202 — vi avslører ikke om e-posten finnes eller ikke
+    (motvirker enumerering av brukere).
+    """
+    import secrets as _secrets
+    from ..email_utils import send_password_reset
+
+    email = request.email.lower().strip()
+    user = db.query(User).filter(User.email == email).first()
+
+    # Bare reelle, lokale, aktive brukere får e-post.
+    # SuSoft-brukere (password_hash == "__susoft__") må nullstille i SuSoft.
+    if user and user.is_active and user.password_hash and user.password_hash != "__susoft__":
+        token = _secrets.token_urlsafe(32)
+        user.password_reset_token = token
+        user.password_reset_expires = datetime.utcnow() + timedelta(hours=1)
+        db.commit()
+
+        tenant = user.tenant or db.query(Tenant).filter(Tenant.id == user.tenant_id).first()
+        background_tasks.add_task(
+            send_password_reset,
+            to_email=user.email,
+            reset_token=token,
+            tenant_name=tenant.name if tenant else "Bakeri",
+        )
+
+    return {"message": "Hvis e-posten finnes i systemet, har vi sendt en lenke for nullstilling."}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    request: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Sett nytt passord ved hjelp av token mottatt på e-post.
+    Tokenet er gyldig i 1 time og kan bare brukes én gang.
+    """
+    user = db.query(User).filter(
+        User.password_reset_token == request.token
+    ).first()
+
+    if not user or not user.password_reset_expires or user.password_reset_expires < datetime.utcnow():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ugyldig eller utløpt nullstillings-token",
+        )
+
+    is_valid, error_msg = validate_password_strength(request.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+
+    user.password_hash = get_password_hash(request.new_password)
+    user.password_reset_token = None
+    user.password_reset_expires = None
+
+    # Logg ut alle eksisterende sesjoner
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == user.id,
+        RefreshToken.is_revoked == False,
+    ).update({"is_revoked": True, "revoked_at": datetime.utcnow()})
+
+    db.commit()
+    return {"message": "Passordet er oppdatert. Du kan nå logge inn."}
+
+
+# =============================================================================
 # USER INVITATION ENDPOINTS
 # =============================================================================
 
@@ -611,14 +700,19 @@ async def invite_user(
     invitation.token = token
     db.commit()
     
-    # TODO: Send invitation email in background
-    # background_tasks.add_task(send_invitation_email, request.email, token, tenant.name)
-    
+    # Send invitasjons-e-post i bakgrunnen (faller tilbake til logging hvis RESEND_API_KEY mangler)
+    from ..email_utils import send_invitation
+    background_tasks.add_task(
+        send_invitation,
+        to_email=request.email.lower(),
+        invite_token=token,
+        tenant_name=tenant.name,
+        inviter_name=current_user.full_name,
+    )
+
     return {
         "message": f"Invitation sent to {request.email}",
-        "invitation_id": invitation.id
-        # In production, don't return the token - it should be emailed
-        # "token": token  # For development/testing only
+        "invitation_id": invitation.id,
     }
 
 

@@ -735,6 +735,8 @@ _ALLOWED_SETTINGS = {
     "labels_show_delivery_window": {"type": "bool", "default": True, "description": "Vis leveringsvindu på etiketter"},
     # PDF-header tekst (overstyrer tenant.name hvis satt)
     "pdf_header_subtitle": {"type": "string", "default": "", "description": "Undertittel som vises i PDF-headeren"},
+    # Onboarding-wizard: settes til True når brukeren har fullført velkomst-flyten
+    "onboarding_completed": {"type": "bool", "default": False, "description": "Onboarding-wizard er fullført"},
 }
 
 

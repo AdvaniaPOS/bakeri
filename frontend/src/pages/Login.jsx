@@ -178,7 +178,7 @@ export default function Login() {
                   Husk meg
                 </label>
               </div>
-              <a href="#" className="text-sm text-amber-600 hover:text-amber-700">
+              <a href="/glemt-passord" className="text-sm text-amber-600 hover:text-amber-700">
                 Glemt passord?
               </a>
             </div>
