@@ -436,7 +436,6 @@ async def update_order_line(
     if order.sync_status == SyncStatus.SYNCED:
         order.sync_status = SyncStatus.PENDING
 
-    db.refresh(order)
     recalculate_order_totals(order)
     db.commit()
     db.refresh(line)
