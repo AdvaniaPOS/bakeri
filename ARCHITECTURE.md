@@ -5,6 +5,24 @@
 
 ---
 
+## 0. API-VERSJONERING OG DEPRECATION
+
+Alle API-endepunkter er montert under prefiks `/api/v1`. Dette gir oss rom til å introdusere `/api/v2` med breaking changes uten å bryte eksisterende klienter.
+
+**Strategi**:
+- **Tilleggsendringer** (nye felter, nye endepunkter, nye optional query params) er **bakoverkompatible** og rulles ut innenfor samme versjon (`v1`).
+- **Breaking changes** (fjerne felter, endre type, endre semantikk, fjerne endepunkter) krever ny versjon (`v2`). Eldre versjon holdes i live i minst **6 måneder** etter at ny versjon er publisert.
+- Når et endepunkt eller felt skal deprekeres skal responsen inkludere headerne:
+  - `Deprecation: true`
+  - `Sunset: <RFC1123-dato>` (når support fjernes)
+  - `Link: <https://docs.poshub.no/api/v2/...>; rel="successor-version"`
+- Klienter (frontend, integrasjoner) bør logge en warning når `Deprecation`-headeren ses.
+- OpenAPI-spec eksponeres på `/docs` (Swagger UI) og `/openapi.json` for begge versjoner.
+
+**Klient-konfigurasjon**: frontend bruker `VITE_API_BASE_URL` (default `http://localhost:8000/api/v1`).
+
+---
+
 ## 1. SYSTEMOVERSIKT
 
 ### 1.1 Formål

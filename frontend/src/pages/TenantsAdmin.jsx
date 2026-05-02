@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Building2, Plus, RefreshCw, CheckCircle, XCircle, AlertCircle, Lock, Unlock, Settings as SettingsIcon, LogIn, ShieldCheck, Trash2, UserPlus, ToggleLeft } from 'lucide-react';
+import { Building2, Plus, RefreshCw, CheckCircle, XCircle, AlertCircle, Lock, Unlock, Settings as SettingsIcon, LogIn, ShieldCheck, Trash2, UserPlus, ToggleLeft, Activity, Download } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const EMPTY_FORM = {
@@ -45,6 +45,13 @@ export default function TenantsAdmin() {
   const [featureValues, setFeatureValues] = useState({});
   const [featureSaving, setFeatureSaving] = useState(false);
   const [featureError, setFeatureError] = useState(null);
+
+  // Rate-limit kvoter
+  const [rateLimitTenant, setRateLimitTenant] = useState(null);
+  const [rateLimitData, setRateLimitData] = useState(null);
+  const [rateLimitInput, setRateLimitInput] = useState('');
+  const [rateLimitSaving, setRateLimitSaving] = useState(false);
+  const [rateLimitError, setRateLimitError] = useState(null);
 
   const isSuperAdmin = (user?.role || '').toLowerCase() === 'super_admin';
 
@@ -115,6 +122,66 @@ export default function TenantsAdmin() {
       setFeatureError(e.message);
     } finally {
       setFeatureSaving(false);
+    }
+  };
+
+  const downloadBackup = async (t) => {
+    try {
+      const resp = await authFetch(`/api/v1/admin/tenants/${t.id}/backup`);
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup-${t.slug}-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(`Backup feilet: ${e.message}`);
+    }
+  };
+
+  const openRateLimit = async (t) => {
+    setRateLimitTenant(t);
+    setRateLimitData(null);
+    setRateLimitInput('');
+    setRateLimitError(null);
+    try {
+      const resp = await authFetch(`/api/v1/admin/tenants/${t.id}/rate-limit`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      setRateLimitData(data);
+      setRateLimitInput(data.override_per_minute ? String(data.override_per_minute) : '');
+    } catch (e) {
+      setRateLimitError(e.message);
+    }
+  };
+
+  const saveRateLimit = async (e) => {
+    e.preventDefault();
+    setRateLimitSaving(true);
+    setRateLimitError(null);
+    try {
+      const value = rateLimitInput.trim() === '' ? null : parseInt(rateLimitInput, 10);
+      if (value !== null && (Number.isNaN(value) || value < 1)) {
+        throw new Error('Må være tomt eller et positivt tall');
+      }
+      const resp = await authFetch(`/api/v1/admin/tenants/${rateLimitTenant.id}/rate-limit`, {
+        method: 'PUT',
+        body: { rate_limit_per_minute: value },
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      setRateLimitTenant(null);
+    } catch (e) {
+      setRateLimitError(e.message);
+    } finally {
+      setRateLimitSaving(false);
     }
   };
 
@@ -417,6 +484,12 @@ export default function TenantsAdmin() {
                         <button onClick={() => openFeatures(t)} className="btn-secondary !py-1 !text-xs" title="Sk ru funksjoner av/p&aring;">
                           <ToggleLeft className="w-3.5 h-3.5" /> Funksjoner
                         </button>
+                        <button onClick={() => openRateLimit(t)} className="btn-secondary !py-1 !text-xs" title="Rate-limit kvote">
+                          <Activity className="w-3.5 h-3.5" /> Kvote
+                        </button>
+                        <button onClick={() => downloadBackup(t)} className="btn-secondary !py-1 !text-xs" title="Last ned full backup (JSON)">
+                          <Download className="w-3.5 h-3.5" /> Backup
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -576,6 +649,46 @@ export default function TenantsAdmin() {
             <div className="flex justify-end gap-2 pt-2 border-t">
               <button type="button" onClick={() => setFeatureTenant(null)} className="btn-secondary">Avbryt</button>
               <button type="submit" disabled={featureSaving} className="btn-primary">{featureSaving ? 'Lagrer…' : 'Lagre'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Rate-limit modal */}
+      {rateLimitTenant && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setRateLimitTenant(null)}>
+          <form onClick={e => e.stopPropagation()} onSubmit={saveRateLimit} className="bg-white rounded-lg shadow-xl max-w-md w-full p-5 space-y-3">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Rate-limit: {rateLimitTenant.name}</h2>
+                <p className="text-xs text-gray-500">Maks antall API-kall per minutt</p>
+              </div>
+              <button type="button" onClick={() => setRateLimitTenant(null)} className="text-gray-400 hover:text-gray-700">&times;</button>
+            </div>
+            {rateLimitData && (
+              <div className="bg-gray-50 rounded p-3 text-sm space-y-1">
+                <div>Plan: <span className="font-mono">{rateLimitData.subscription_plan || '—'}</span></div>
+                <div>Plan-default: <span className="font-mono">{rateLimitData.plan_default_per_minute}/min</span></div>
+                <div>Override: <span className="font-mono">{rateLimitData.override_per_minute ?? 'ingen'}</span></div>
+                <div className="font-medium">Aktiv: <span className="font-mono">{rateLimitData.effective_per_minute}/min</span></div>
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Override (per minutt)</label>
+              <input
+                type="number"
+                min="1"
+                value={rateLimitInput}
+                onChange={e => setRateLimitInput(e.target.value)}
+                className="input"
+                placeholder="Tomt = bruk plan-default"
+              />
+              <p className="text-xs text-gray-500 mt-1">La feltet stå tomt for å fjerne override.</p>
+            </div>
+            {rateLimitError && <p className="text-sm text-red-600">{rateLimitError}</p>}
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <button type="button" onClick={() => setRateLimitTenant(null)} className="btn-secondary">Avbryt</button>
+              <button type="submit" disabled={rateLimitSaving} className="btn-primary">{rateLimitSaving ? 'Lagrer…' : 'Lagre'}</button>
             </div>
           </form>
         </div>

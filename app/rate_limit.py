@@ -125,6 +125,62 @@ _backend: _Backend = _build_backend()
 
 
 # =============================================================================
+# Tenant plan/override cache
+# =============================================================================
+
+# Cache (plan_limit, override) per tenant_id med kort TTL slik at vi slipper
+# DB-oppslag på hver request, men fortsatt plukker opp endringer raskt.
+_TENANT_CACHE_TTL = 30.0  # sekunder
+_tenant_cache: dict[int, tuple[float, int]] = {}
+_tenant_cache_lock = Lock()
+
+
+def _resolve_tenant_limit(tenant_id: int) -> int:
+    """
+    Returner gjeldende rate-limit for tenant. Override i settings.rate_limit_per_minute
+    har forrang; ellers brukes plan-default. Cachet i {_TENANT_CACHE_TTL}s.
+    """
+    now = time.time()
+    with _tenant_cache_lock:
+        cached = _tenant_cache.get(tenant_id)
+        if cached and (now - cached[0]) < _TENANT_CACHE_TTL:
+            return cached[1]
+
+    # Lazy import for å unngå sirkulær avhengighet ved oppstart.
+    from .database import SessionLocal
+    from .auth_models import Tenant
+
+    limit = PLAN_LIMITS[None]
+    try:
+        db = SessionLocal()
+        try:
+            tenant = db.get(Tenant, tenant_id)
+            if tenant is not None:
+                plan_limit = PLAN_LIMITS.get(tenant.subscription_plan, PLAN_LIMITS[None])
+                override = None
+                if tenant.settings:
+                    raw = tenant.settings.get("rate_limit_per_minute")
+                    if isinstance(raw, (int, float)) and raw > 0:
+                        override = int(raw)
+                limit = override if override is not None else plan_limit
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        # Ved DB-feil: fall tilbake til konservativ default heller enn å åpne.
+        limit = PLAN_LIMITS[None]
+
+    with _tenant_cache_lock:
+        _tenant_cache[tenant_id] = (now, limit)
+    return limit
+
+
+def invalidate_tenant_rate_limit(tenant_id: int) -> None:
+    """Fjern cache-entry slik at neste request henter friske verdier fra DB."""
+    with _tenant_cache_lock:
+        _tenant_cache.pop(tenant_id, None)
+
+
+# =============================================================================
 # Middleware
 # =============================================================================
 
@@ -135,7 +191,8 @@ def _resolve_key_and_limit(request: Request) -> tuple[str, int]:
         token = auth.split(" ", 1)[1].strip()
         token_data = verify_access_token(token)
         if token_data and token_data.tenant_id is not None:
-            return f"tenant:{token_data.tenant_id}", PLAN_LIMITS[SubscriptionPlan.PROFESSIONAL]
+            limit = _resolve_tenant_limit(token_data.tenant_id)
+            return f"tenant:{token_data.tenant_id}", limit
 
     client_host = request.client.host if request.client else "unknown"
     return f"ip:{client_host}", PLAN_LIMITS[None]

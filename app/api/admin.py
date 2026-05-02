@@ -1275,6 +1275,75 @@ async def get_feature_catalog(
 
 
 # =============================================================================
+# SUPER-ADMIN: RATE-LIMIT KVOTER PER TENANT
+# =============================================================================
+
+class TenantRateLimitUpdate(BaseModel):
+    """Override for rate-limit (req/min). Sett til null for å bruke plan-default."""
+    rate_limit_per_minute: Optional[int] = Field(default=None, ge=1, le=100000)
+
+
+@router.get("/tenants/{tenant_id}/rate-limit")
+async def get_tenant_rate_limit(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """Hent gjeldende rate-limit (override + plan-default) for tenant."""
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant ikke funnet")
+    from ..rate_limit import PLAN_LIMITS
+    override = None
+    if tenant.settings:
+        raw = tenant.settings.get("rate_limit_per_minute")
+        if isinstance(raw, (int, float)) and raw > 0:
+            override = int(raw)
+    plan_default = PLAN_LIMITS.get(tenant.subscription_plan, PLAN_LIMITS[None])
+    return {
+        "tenant_id": tenant_id,
+        "subscription_plan": tenant.subscription_plan.value if tenant.subscription_plan else None,
+        "plan_default_per_minute": plan_default,
+        "override_per_minute": override,
+        "effective_per_minute": override if override is not None else plan_default,
+    }
+
+
+@router.put("/tenants/{tenant_id}/rate-limit")
+async def update_tenant_rate_limit(
+    tenant_id: int,
+    payload: TenantRateLimitUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """
+    SUPER_ADMIN: sett eller fjern override for rate-limit.
+
+    `rate_limit_per_minute=null` ⇒ fjern override (bruk plan-default).
+    """
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant ikke funnet")
+    new_settings = dict(tenant.settings or {})
+    if payload.rate_limit_per_minute is None:
+        new_settings.pop("rate_limit_per_minute", None)
+    else:
+        new_settings["rate_limit_per_minute"] = payload.rate_limit_per_minute
+    tenant.settings = new_settings
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(tenant, "settings")
+    db.commit()
+    # Invalider cache umiddelbart slik at neste request bruker ny grense.
+    from ..rate_limit import invalidate_tenant_rate_limit
+    invalidate_tenant_rate_limit(tenant_id)
+    return {
+        "tenant_id": tenant_id,
+        "rate_limit_per_minute": payload.rate_limit_per_minute,
+    }
+
+
+
+# =============================================================================
 # SUPER-ADMIN: HANDTERE FLERE SUPER-ADMINS
 # =============================================================================
 
@@ -1497,6 +1566,95 @@ async def export_tenant_data(
 
     headers = {
         "Content-Disposition": f"attachment; filename=tenant-{tenant.slug}-export-{datetime.utcnow().date()}.json",
+    }
+    return JSONResponse(content=export, headers=headers)
+
+
+def _build_tenant_export(db: Session, tenant: Tenant) -> dict:
+    """Felles helper: bygg full eksport-dict for en tenant. Brukes av backup."""
+    from .. import models as m
+    from ..auth_models import User as UserModel
+
+    tenant_tables = [
+        ("routes", m.Route),
+        ("route_postal_rules", m.RoutePostalRule),
+        ("customers", m.Customer),
+        ("products", m.Product),
+        ("customer_product_prices", m.CustomerProductPrice),
+        ("master_templates", m.MasterTemplate),
+        ("master_template_items", m.MasterTemplateItem),
+        ("orders", m.Order),
+        ("order_lines", m.OrderLine),
+        ("order_date_overrides", m.OrderDateOverride),
+        ("holidays", m.Holiday),
+        ("customer_blocked_dates", m.CustomerBlockedDate),
+        ("delivery_routes", m.DeliveryRoute),
+        ("delivery_issues", m.DeliveryIssue),
+        ("audit_logs", m.AuditLog),
+        ("sync_logs", m.SyncLog),
+        ("admin_alerts", m.AdminAlert),
+        ("daily_production_summary", m.DailyProductionSummary),
+        ("production_logs", m.ProductionLog),
+    ]
+    export: dict = {
+        "exported_at": datetime.utcnow().isoformat(),
+        "tenant": {
+            "id": tenant.id,
+            "name": tenant.name,
+            "slug": tenant.slug,
+            "email": tenant.email,
+            "subscription_plan": tenant.subscription_plan.value if tenant.subscription_plan else None,
+            "logo_url": getattr(tenant, "logo_url", None),
+            "primary_color": getattr(tenant, "primary_color", None),
+            "settings": getattr(tenant, "settings", None),
+            "features_enabled": getattr(tenant, "features_enabled", None),
+        },
+        "users": [],
+        "data": {},
+    }
+    users = db.execute(select(UserModel).where(UserModel.tenant_id == tenant.id)).scalars().all()
+    for u in users:
+        export["users"].append({
+            "id": u.id,
+            "email": u.email,
+            "first_name": u.first_name,
+            "last_name": u.last_name,
+            "role": u.role.value if u.role else None,
+            "is_active": u.is_active,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+        })
+    for key, model in tenant_tables:
+        try:
+            rows = db.execute(select(model).where(model.tenant_id == tenant.id)).scalars().all()
+            export["data"][key] = [_serialize_row(r) for r in rows]
+        except Exception as e:
+            export["data"][key] = {"error": str(e)}
+    return export
+
+
+@router.get("/tenants/{tenant_id}/backup")
+async def backup_tenant(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """
+    SUPER_ADMIN: last ned full backup (JSON) for en valgt tenant.
+
+    Identisk innhold som /tenant/export, men kan kalles for andre tenants
+    enn den innloggede brukeren tilhorer. Egnet for nattlig automatisk
+    backup-jobb (curl + lagre til S3/disk).
+    """
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant ikke funnet")
+    export = _build_tenant_export(db, tenant)
+    headers = {
+        "Content-Disposition": (
+            f"attachment; filename=backup-tenant-{tenant.slug}-"
+            f"{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.json"
+        ),
     }
     return JSONResponse(content=export, headers=headers)
 
