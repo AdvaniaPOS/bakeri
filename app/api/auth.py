@@ -54,6 +54,7 @@ def _tenant_to_dict(tenant) -> dict:
         "logo_url": getattr(tenant, "logo_url", None),
         "primary_color": getattr(tenant, "primary_color", None),
         "features_enabled": merged_features(tenant),
+        "settings": getattr(tenant, "settings", None) or {},
     }
 
 
