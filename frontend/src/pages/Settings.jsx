@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon } from 'lucide-react';
+import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon, Download } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Settings() {
@@ -510,6 +510,46 @@ export default function Settings() {
                 </span>
               )}
             </div>
+          </div>
+        )}
+
+        {/* GDPR-eksport (kun TENANT_ADMIN+) */}
+        {isAdmin() && (
+          <div className="card">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Download className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-gray-900">GDPR-eksport</h2>
+                <p className="text-sm text-gray-500">Last ned alle data tilh&oslash;rende denne tenanten som JSON</p>
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                try {
+                  const resp = await authFetch('/api/v1/admin/tenant/export');
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  const blob = await resp.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `tenant-${tenant?.slug || 'export'}-${new Date().toISOString().slice(0, 10)}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(url);
+                } catch (e) {
+                  alert('Eksport feilet: ' + e.message);
+                }
+              }}
+              className="btn btn-primary"
+            >
+              <Download className="w-4 h-4" /> Last ned eksport
+            </button>
+            <p className="text-xs text-gray-500 mt-2">
+              Inneholder kunder, ordrer, produkter, brukere (uten passord), maler, ruter og audit-logg.
+            </p>
           </div>
         )}
 

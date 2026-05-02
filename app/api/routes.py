@@ -18,8 +18,13 @@ from ..schemas import (
     RoutePostalAutoAssignPreview,
 )
 from ..tenant_scope import get_or_404
+from ..features import feature_required
 
-router = APIRouter(prefix="/routes", tags=["Routes"])
+router = APIRouter(
+    prefix="/routes",
+    tags=["Routes"],
+    dependencies=[Depends(feature_required("routes"))],
+)
 
 
 @router.get("", response_model=RouteListResponse)

@@ -45,6 +45,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 def _tenant_to_dict(tenant) -> dict:
     """Bygger tenant-payload for login/register-respons med branding."""
+    from ..features import merged_features
     return {
         "id": tenant.id,
         "name": tenant.name,
@@ -52,7 +53,7 @@ def _tenant_to_dict(tenant) -> dict:
         "subscription_plan": tenant.subscription_plan.value if tenant.subscription_plan else None,
         "logo_url": getattr(tenant, "logo_url", None),
         "primary_color": getattr(tenant, "primary_color", None),
-        "features_enabled": getattr(tenant, "features_enabled", None) or {},
+        "features_enabled": merged_features(tenant),
     }
 
 

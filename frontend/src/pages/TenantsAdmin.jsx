@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Building2, Plus, RefreshCw, CheckCircle, XCircle, AlertCircle, Lock, Unlock, Settings as SettingsIcon, LogIn, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { Building2, Plus, RefreshCw, CheckCircle, XCircle, AlertCircle, Lock, Unlock, Settings as SettingsIcon, LogIn, ShieldCheck, Trash2, UserPlus, ToggleLeft } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const EMPTY_FORM = {
@@ -39,6 +39,13 @@ export default function TenantsAdmin() {
   const [adminError, setAdminError] = useState(null);
   const [adminSaving, setAdminSaving] = useState(false);
 
+  // Features
+  const [featureCatalog, setFeatureCatalog] = useState([]);
+  const [featureTenant, setFeatureTenant] = useState(null);
+  const [featureValues, setFeatureValues] = useState({});
+  const [featureSaving, setFeatureSaving] = useState(false);
+  const [featureError, setFeatureError] = useState(null);
+
   const isSuperAdmin = (user?.role || '').toLowerCase() === 'super_admin';
 
   const loadTenants = async () => {
@@ -62,10 +69,54 @@ export default function TenantsAdmin() {
     if (isSuperAdmin) {
       loadTenants();
       loadSuperAdmins();
+      loadFeatureCatalog();
     } else {
       setLoading(false);
     }
   }, [isSuperAdmin]);
+
+  const loadFeatureCatalog = async () => {
+    try {
+      const resp = await authFetch('/api/v1/admin/features/catalog');
+      if (resp.ok) {
+        const data = await resp.json();
+        setFeatureCatalog(data.features || []);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const openFeatures = async (t) => {
+    setFeatureTenant(t);
+    setFeatureError(null);
+    setFeatureValues({});
+    try {
+      const resp = await authFetch(`/api/v1/admin/tenants/${t.id}/features`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      setFeatureValues(data.features_enabled || {});
+    } catch (e) {
+      setFeatureError(e.message);
+    }
+  };
+
+  const saveFeatures = async (e) => {
+    e.preventDefault();
+    setFeatureSaving(true);
+    setFeatureError(null);
+    try {
+      const resp = await authFetch(`/api/v1/admin/tenants/${featureTenant.id}/features`, {
+        method: 'PUT',
+        body: { features: featureValues },
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      setFeatureTenant(null);
+    } catch (e) {
+      setFeatureError(e.message);
+    } finally {
+      setFeatureSaving(false);
+    }
+  };
 
   const loadSuperAdmins = async () => {
     try {
@@ -363,6 +414,9 @@ export default function TenantsAdmin() {
                         <button onClick={() => openEdit(t)} className="btn-secondary !py-1 !text-xs">
                           <SettingsIcon className="w-3.5 h-3.5" /> SuSoft
                         </button>
+                        <button onClick={() => openFeatures(t)} className="btn-secondary !py-1 !text-xs" title="Sk ru funksjoner av/p&aring;">
+                          <ToggleLeft className="w-3.5 h-3.5" /> Funksjoner
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -486,6 +540,42 @@ export default function TenantsAdmin() {
             <div className="flex justify-end gap-2 pt-2 border-t">
               <button type="button" onClick={() => setEditTenant(null)} className="btn-secondary">Avbryt</button>
               <button type="submit" disabled={editSaving} className="btn-primary">{editSaving ? 'Lagrer…' : 'Lagre'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Features modal */}
+      {featureTenant && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setFeatureTenant(null)}>
+          <form onClick={e => e.stopPropagation()} onSubmit={saveFeatures} className="bg-white rounded-lg shadow-xl max-w-lg w-full p-5 space-y-3">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Funksjoner: {featureTenant.name}</h2>
+                <p className="text-xs text-gray-500">Sk ru av eller p&aring; moduler for denne kunden</p>
+              </div>
+              <button type="button" onClick={() => setFeatureTenant(null)} className="text-gray-400 hover:text-gray-700">&times;</button>
+            </div>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {featureCatalog.map(f => (
+                <label key={f.key} className="flex items-start gap-3 p-2 rounded hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={featureValues[f.key] ?? f.default}
+                    onChange={e => setFeatureValues(v => ({ ...v, [f.key]: e.target.checked }))}
+                    className="mt-1"
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium text-sm text-gray-900">{f.name} <span className="text-xs font-mono text-gray-400">({f.key})</span></div>
+                    <div className="text-xs text-gray-500">{f.description}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {featureError && <p className="text-sm text-red-600">{featureError}</p>}
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <button type="button" onClick={() => setFeatureTenant(null)} className="btn-secondary">Avbryt</button>
+              <button type="submit" disabled={featureSaving} className="btn-primary">{featureSaving ? 'Lagrer…' : 'Lagre'}</button>
             </div>
           </form>
         </div>

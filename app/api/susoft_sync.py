@@ -17,8 +17,13 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Order, SyncLog, SyncStatus, OrderStatus
 from ..services.susoft import SuSoftService, SuSoftAPIError
+from ..features import feature_required
 
-router = APIRouter(prefix="/sync", tags=["Susoft Sync"])
+router = APIRouter(
+    prefix="/sync",
+    tags=["Susoft Sync"],
+    dependencies=[Depends(feature_required("susoft_sync"))],
+)
 
 
 # =============================================================================

@@ -335,6 +335,14 @@ export function AuthProvider({ children }) {
     });
   }, []);
 
+  // Sjekk om tenant har en feature aktivert (default true hvis ukjent)
+  const hasFeature = useCallback((key) => {
+    if (!tenant) return true;
+    const feats = tenant.features_enabled || {};
+    if (key in feats) return !!feats[key];
+    return true; // ukjent feature -> ikke skjul
+  }, [tenant]);
+
   const value = {
     user,
     tenant,
@@ -353,6 +361,7 @@ export function AuthProvider({ children }) {
     dismissNotification,
     triggerHorizonCheck,
     updateTenant,
+    hasFeature,
   };
 
   return (

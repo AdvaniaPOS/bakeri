@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
+from fastapi.responses import JSONResponse
 from sqlalchemy import select, and_
 from sqlalchemy.orm import Session
 
@@ -432,12 +433,14 @@ async def list_audit_logs(
     to_date: Optional[datetime] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    _: User = Depends(require_role(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER)),
 ):
     """
-    Search audit logs with filtering.
+    Search audit logs with filtering. Tenant-scoped.
     """
-    query = select(AuditLog)
+    query = select(AuditLog).where(AuditLog.tenant_id == tenant.id)
     
     if entity_type:
         query = query.where(AuditLog.entity_type == entity_type)
@@ -473,13 +476,17 @@ async def list_deletion_logs(
     from_date: Optional[datetime] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    _: User = Depends(require_role(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER)),
 ):
     """
-    List all deletion audit logs.
-    Useful for compliance and auditing.
+    List all deletion audit logs. Tenant-scoped.
     """
-    query = select(AuditLog).where(AuditLog.action == AuditAction.DELETE)
+    query = select(AuditLog).where(
+        AuditLog.tenant_id == tenant.id,
+        AuditLog.action == AuditAction.DELETE,
+    )
     
     if from_date:
         query = query.where(AuditLog.timestamp >= from_date)
@@ -1250,7 +1257,21 @@ async def get_tenant_features(
     tenant = db.get(Tenant, tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant ikke funnet")
-    return {"tenant_id": tenant_id, "features_enabled": tenant.features_enabled or {}}
+    from ..features import merged_features
+    return {
+        "tenant_id": tenant_id,
+        "features_enabled": merged_features(tenant),
+        "overrides": tenant.features_enabled or {},
+    }
+
+
+@router.get("/features/catalog")
+async def get_feature_catalog(
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """Liste over alle kjente features med default-verdier."""
+    from ..features import FEATURE_CATALOG
+    return {"features": FEATURE_CATALOG}
 
 
 # =============================================================================
@@ -1380,6 +1401,105 @@ async def delete_super_admin(
         raise HTTPException(status_code=400, detail="Kan ikke slette siste super-admin")
     db.delete(target)
     db.commit()
+
+
+# =============================================================================
+# GDPR: TENANT-EKSPORT
+# =============================================================================
+
+def _serialize_row(obj) -> dict:
+    """Konverter SQLAlchemy-rad til dict (kun primitive felter)."""
+    out = {}
+    for col in obj.__table__.columns:
+        v = getattr(obj, col.name, None)
+        if isinstance(v, datetime):
+            out[col.name] = v.isoformat()
+        elif hasattr(v, "value"):  # Enum
+            out[col.name] = v.value
+        else:
+            out[col.name] = v
+    return out
+
+
+@router.get("/tenant/export")
+async def export_tenant_data(
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
+):
+    """
+    GDPR-eksport: returner all data tilhorende denne tenanten som JSON.
+    Kun TENANT_ADMIN+ for egen tenant.
+    """
+    from .. import models as m
+    from ..auth_models import User as UserModel
+
+    # Tenant-scoped tabeller (TenantMixin)
+    tenant_tables = [
+        ("routes", m.Route),
+        ("route_postal_rules", m.RoutePostalRule),
+        ("customers", m.Customer),
+        ("products", m.Product),
+        ("customer_product_prices", m.CustomerProductPrice),
+        ("master_templates", m.MasterTemplate),
+        ("master_template_items", m.MasterTemplateItem),
+        ("orders", m.Order),
+        ("order_lines", m.OrderLine),
+        ("order_date_overrides", m.OrderDateOverride),
+        ("holidays", m.Holiday),
+        ("customer_blocked_dates", m.CustomerBlockedDate),
+        ("delivery_routes", m.DeliveryRoute),
+        ("delivery_issues", m.DeliveryIssue),
+        ("audit_logs", m.AuditLog),
+        ("sync_logs", m.SyncLog),
+        ("admin_alerts", m.AdminAlert),
+        ("daily_production_summary", m.DailyProductionSummary),
+        ("production_logs", m.ProductionLog),
+    ]
+
+    export: dict = {
+        "exported_at": datetime.utcnow().isoformat(),
+        "tenant": {
+            "id": tenant.id,
+            "name": tenant.name,
+            "slug": tenant.slug,
+            "email": tenant.email,
+            "subscription_plan": tenant.subscription_plan.value if tenant.subscription_plan else None,
+            "logo_url": getattr(tenant, "logo_url", None),
+            "primary_color": getattr(tenant, "primary_color", None),
+            "settings": getattr(tenant, "settings", None),
+            "features_enabled": getattr(tenant, "features_enabled", None),
+        },
+        "users": [],
+        "data": {},
+    }
+
+    # Brukere (uten password_hash!)
+    users = db.execute(select(UserModel).where(UserModel.tenant_id == tenant.id)).scalars().all()
+    for u in users:
+        export["users"].append({
+            "id": u.id,
+            "email": u.email,
+            "first_name": u.first_name,
+            "last_name": u.last_name,
+            "role": u.role.value if u.role else None,
+            "is_active": u.is_active,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+        })
+
+    for key, model in tenant_tables:
+        try:
+            rows = db.execute(select(model).where(model.tenant_id == tenant.id)).scalars().all()
+            export["data"][key] = [_serialize_row(r) for r in rows]
+        except Exception as e:
+            export["data"][key] = {"error": str(e)}
+
+    headers = {
+        "Content-Disposition": f"attachment; filename=tenant-{tenant.slug}-export-{datetime.utcnow().date()}.json",
+    }
+    return JSONResponse(content=export, headers=headers)
+
 
 
 

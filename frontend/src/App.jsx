@@ -15,6 +15,7 @@ import ProductionLog from './pages/ProductionLog';
 import DeliveryList from './pages/DeliveryList';
 import Driver from './pages/Driver';
 import TenantsAdmin from './pages/TenantsAdmin';
+import AuditLog from './pages/AuditLog';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import './index.css';
@@ -72,6 +73,7 @@ function AppRoutes() {
         <Route path="kjoreliste" element={<DeliveryList />} />
         <Route path="sjafor" element={<Driver />} />
         <Route path="innstillinger" element={<Settings />} />
+        <Route path="audit-logg" element={<AuditLog />} />
         <Route path="admin/tenants" element={<TenantsAdmin />} />
       </Route>
       

@@ -17,6 +17,7 @@ import {
   Building2,
   CheckCircle2,
   TrendingDown,
+  History,
   Moon,
   Sun,
   Menu,
@@ -28,13 +29,14 @@ const navigation = [
   { name: 'Produkter', href: '/produkter', icon: Package },
   { name: 'Kunder', href: '/kunder', icon: Users },
   { name: 'Bestillinger', href: '/bestillinger', icon: ShoppingCart },
-  { name: 'Maler', href: '/maler', icon: FileText },
-  { name: 'Ruter', href: '/ruter', icon: Truck },
-  { name: 'Produksjon', href: '/produksjon', icon: ClipboardList },
-  { name: 'Svinn & faktisk', href: '/produksjon/logg', icon: TrendingDown },
-  { name: 'Kjøreliste', href: '/kjoreliste', icon: MapPin },
-  { name: 'Sjåfør', href: '/sjafor', icon: CheckCircle2 },
+  { name: 'Maler', href: '/maler', icon: FileText, feature: 'templates' },
+  { name: 'Ruter', href: '/ruter', icon: Truck, feature: 'routes' },
+  { name: 'Produksjon', href: '/produksjon', icon: ClipboardList, feature: 'production' },
+  { name: 'Svinn & faktisk', href: '/produksjon/logg', icon: TrendingDown, feature: 'production' },
+  { name: 'Kjøreliste', href: '/kjoreliste', icon: MapPin, feature: 'routes' },
+  { name: 'Sjåfør', href: '/sjafor', icon: CheckCircle2, feature: 'driver_app' },
   { name: 'Innstillinger', href: '/innstillinger', icon: Settings },
+  { name: 'Audit-logg', href: '/audit-logg', icon: History, roles: ['SUPER_ADMIN', 'TENANT_ADMIN', 'MANAGER'] },
 ];
 
 const superAdminNavigation = [
@@ -42,7 +44,7 @@ const superAdminNavigation = [
 ];
 
 export default function Layout() {
-  const { user, tenant, logout, notification, dismissNotification } = useAuth();
+  const { user, tenant, logout, notification, dismissNotification, hasFeature } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -183,7 +185,11 @@ export default function Layout() {
 
         {/* Navigation */}
         <nav className="flex-1 px-2 pt-1 space-y-0.5 overflow-y-auto">
-          {navigation.map((item) => (
+          {navigation.filter(item => {
+            if (item.feature && !hasFeature(item.feature)) return false;
+            if (item.roles && !item.roles.includes((user?.role || '').toUpperCase())) return false;
+            return true;
+          }).map((item) => (
             <NavLink
               key={item.name}
               to={item.href}

@@ -17,8 +17,13 @@ from ..schemas import (
     TemplateMatrixView, ProductResponse
 )
 from ..tenant_scope import get_or_404
+from ..features import feature_required
 
-router = APIRouter(prefix="/templates", tags=["Master Templates"])
+router = APIRouter(
+    prefix="/templates",
+    tags=["Master Templates"],
+    dependencies=[Depends(feature_required("templates"))],
+)
 
 
 def _get_template(db: Session, template_id: int, tenant_id: int, with_items: bool = False) -> MasterTemplate:
