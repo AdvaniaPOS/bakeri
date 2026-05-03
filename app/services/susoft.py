@@ -682,9 +682,10 @@ class SuSoftService:
         """
         self._ensure_tenant_available()
 
+        # SuSoft krever ISO-datetime: yyyy-MM-dd'T'HH:mm:ss.SSS (kort dato gir HTTP 400)
         params: Dict[str, Any] = {
-            "fromDate": date_from.strftime("%Y-%m-%d"),
-            "toDate": date_to.strftime("%Y-%m-%d"),
+            "fromDate": date_from.strftime("%Y-%m-%dT00:00:00.000"),
+            "toDate": (date_to + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00.000"),
             "mode": mode,
         }
         if shop_id:
