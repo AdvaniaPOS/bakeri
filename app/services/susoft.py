@@ -711,20 +711,23 @@ class SuSoftService:
             )
 
         flat: List[Dict[str, Any]] = []
-        for shop_block in body:
-            if not isinstance(shop_block, dict):
+        for entry in body:
+            if not isinstance(entry, dict):
                 continue
-            sid = shop_block.get("shopId")
-            sname = shop_block.get("shopName")
-            rows = shop_block.get("rows") or []
-            if not isinstance(rows, list):
-                continue
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                row.setdefault("_shopId", sid)
-                row.setdefault("_shopName", sname)
-                flat.append(row)
+            # Format A: shop-wrapper {shopId, shopName, rows: [order, ...]}
+            if "rows" in entry and isinstance(entry.get("rows"), list):
+                sid = entry.get("shopId")
+                sname = entry.get("shopName")
+                for row in entry["rows"]:
+                    if isinstance(row, dict):
+                        row.setdefault("_shopId", sid)
+                        row.setdefault("_shopName", sname)
+                        flat.append(row)
+            else:
+                # Format B: flat order-objekt med shopId pa toppniva
+                entry.setdefault("_shopId", entry.get("shopId"))
+                entry.setdefault("_shopName", entry.get("shopName"))
+                flat.append(entry)
         logger.info(
             "SuSoft /order/list %s..%s shop=%s -> %d rader",
             date_from, date_to, shop_id or "*", len(flat),
