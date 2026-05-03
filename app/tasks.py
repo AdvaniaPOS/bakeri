@@ -157,6 +157,11 @@ def _generate_orders_sync(db, customer_id, template, from_date, to_date):
     customer = db.get(Customer, customer_id)
     delivers_on_holidays = bool(customer and customer.delivers_on_holidays)
 
+    # Hent tenant for ordrenr-allokering
+    from .auth_models import Tenant as _Tenant
+    from .services.order_numbering import allocate_order_no
+    tenant_obj = db.get(_Tenant, customer.tenant_id) if customer else None
+
     orders_created = []
     current_date = from_date
 
@@ -206,11 +211,15 @@ def _generate_orders_sync(db, customer_id, template, from_date, to_date):
         
         # Create order
         order = Order(
+            tenant_id=customer.tenant_id,
             customer_id=customer_id,
             delivery_date=current_date,
             status=OrderStatus.DRAFT,
-            generated_from_template_id=template.id
+            generated_from_template_id=template.id,
+            reference=template.default_reference,
         )
+        if tenant_obj:
+            allocate_order_no(db, tenant_obj, order)
         db.add(order)
         db.flush()
         

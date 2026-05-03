@@ -536,6 +536,8 @@ def _build_packing_list_data(tenant_id: int, target_date: date, db: Session) -> 
             "address": addr,
             "phone": cust.phone,
             "order_id": order.id,
+            "order_no_display": order.order_no_display,
+            "reference": order.reference,
             "delivery_date": order.delivery_date,
             "delivery_window_start": cust.delivery_window_start.isoformat() if cust.delivery_window_start else None,
             "delivery_window_end": cust.delivery_window_end.isoformat() if cust.delivery_window_end else None,
@@ -625,6 +627,8 @@ async def order_confirmation_pdf(
             "id": order.id,
             "delivery_date": order.delivery_date,
             "notes": order.notes,
+            "order_no_display": order.order_no_display,
+            "reference": order.reference,
         },
         "status_label": _status_label(order.status),
         "customer": {
@@ -655,21 +659,47 @@ async def delivery_confirmation_pdf(
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
+    from ..models import OrderAmendment
     order = db.execute(
         select(Order)
         .where(Order.id == order_id, Order.tenant_id == tenant.id)
         .options(
             selectinload(Order.customer),
             selectinload(Order.lines).selectinload(OrderLine.product),
+            selectinload(Order.amendments),
         )
     ).scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
     cust = order.customer
+    lines = [
+        {
+            "product_name": l.product.name if l.product else "?",
+            "quantity": l.quantity,
+            "unit": l.product.unit if l.product else "",
+            "notes": l.notes,
+            "allergens": getattr(l.product, "allergens", None) if l.product else None,
+        }
+        for l in order.lines
+    ]
+    allergen_set = set()
+    for l in lines:
+        if l.get("allergens"):
+            for a in str(l["allergens"]).split(","):
+                a = a.strip()
+                if a:
+                    allergen_set.add(a)
+    allergens_summary = ", ".join(sorted(allergen_set)) if allergen_set else None
+
     ctx = {
         **tenant_header_context(tenant),
-        "order": {"id": order.id, "delivery_date": order.delivery_date},
+        "order": {
+            "id": order.id,
+            "order_no_display": order.order_no_display,
+            "delivery_date": order.delivery_date,
+            "reference": order.reference,
+        },
         "customer": {
             "name": cust.name if cust else "",
             "company_name": cust.company_name if cust else None,
@@ -677,18 +707,15 @@ async def delivery_confirmation_pdf(
                 cust.street_address if cust else None,
                 f"{cust.postal_code or ''} {cust.city or ''}".strip() if cust else None,
             ])),
+            "phone": cust.phone if cust else None,
         },
-        "lines": [
-            {
-                "product_name": l.product.name if l.product else "?",
-                "quantity": l.quantity,
-                "unit": l.product.unit if l.product else "",
-            }
-            for l in order.lines
-        ],
+        "lines": lines,
+        "allergens_summary": allergens_summary,
+        "amendments": sorted(order.amendments, key=lambda a: a.amended_at),
     }
     pdf = render_pdf("delivery_confirmation.html", ctx)
-    return _pdf_response(pdf, f"ordre-{order.id}-leveringsbekreftelse.pdf")
+    fname = order.order_no_display or f"ordre-{order.id}"
+    return _pdf_response(pdf, f"{fname}-leveringsbekreftelse.pdf")
 
 
 @router.get("/pdf/delivery-list/{route_id}/{target_date}")
@@ -732,6 +759,8 @@ async def delivery_list_pdf(
             "address": addr,
             "phone": cust.phone,
             "order_id": order.id,
+            "order_no_display": order.order_no_display,
+            "reference": order.reference,
             "delivery_date": order.delivery_date,
             "delivery_window_start": cust.delivery_window_start.isoformat() if cust.delivery_window_start else None,
             "delivery_window_end": cust.delivery_window_end.isoformat() if cust.delivery_window_end else None,

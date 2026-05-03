@@ -17,6 +17,7 @@ export default function NewOrder() {
   const [orderLines, setOrderLines] = useState([]);
   const [notes, setNotes] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
+  const [reference, setReference] = useState('');
   const [productSearch, setProductSearch] = useState('');
   const [showProductPicker, setShowProductPicker] = useState(false);
 
@@ -123,6 +124,7 @@ export default function NewOrder() {
       const orderData = {
         customer_id: selectedCustomer.id,
         delivery_date: deliveryDate,
+        reference: reference.trim() || null,
         internal_notes: notes || null,
         customer_notes: customerNotes || null,
         lines: orderLines.map(l => ({
@@ -316,6 +318,18 @@ export default function NewOrder() {
             <div className="card">
               <h2 className="text-lg font-semibold mb-4">Notater</h2>
               <div className="space-y-4">
+                <div>
+                  <label className="label">Referanse (valgfri)</label>
+                  <input
+                    type="text"
+                    value={reference}
+                    onChange={(e) => setReference(e.target.value)}
+                    className="input w-full"
+                    placeholder="PO-nr, plan eller prosjektreferanse"
+                    maxLength={255}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Vises på leveringsbekreftelse til kunde.</p>
+                </div>
                 <div>
                   <label className="label">Interne notater</label>
                   <textarea

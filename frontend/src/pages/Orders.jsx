@@ -41,7 +41,8 @@ export default function Orders() {
       // Map API response to UI format
       const mappedOrders = (data.items || []).map(o => ({
         id: o.id,
-        orderId: `ORD-${o.id}`,
+        orderId: o.order_no_display || `ORD-${o.id}`,
+        reference: o.reference || '',
         customer: o.customer_name || `Kunde #${o.customer_id}`,
         customerId: o.customer_id,
         deliveryDate: o.delivery_date,
@@ -469,6 +470,7 @@ export default function Orders() {
                   </th>
                   <th>Ordre</th>
                   <th>Kunde</th>
+                  <th>Ref.</th>
                   <th>Leveringsdato</th>
                   <th>Varer</th>
                   <th className="text-right">Total</th>
@@ -496,6 +498,7 @@ export default function Orders() {
                         <span className="font-mono font-medium text-gray-900">{order.orderId}</span>
                       </td>
                       <td className="text-gray-700">{order.customer}</td>
+                      <td className="text-gray-500 text-sm">{order.reference || <span className="text-gray-300">&mdash;</span>}</td>
                       <td className="text-gray-700">{formatDate(order.deliveryDate)}</td>
                       <td className="text-gray-500">{order.items} varer</td>
                       <td className="text-right font-medium text-gray-900">
@@ -537,6 +540,18 @@ export default function Orders() {
                             title="Ordrebekreftelse (PDF)"
                           >
                             <Download className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const { openPdf } = await import('../utils/pdf');
+                                await openPdf(authFetch, `/api/v1/reports/order/${order.id}/delivery.pdf`);
+                              } catch (e) { setError(e.message || 'Kunne ikke åpne PDF'); }
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 rounded"
+                            title="Leveringsbekreftelse (PDF)"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
                           </button>
                           {visibilityFilter === 'hidden' ? (
                             <button
@@ -722,8 +737,13 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [deliveryDate, setDeliveryDate] = useState('');
+  const [referenceText, setReferenceText] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
+  const [amendments, setAmendments] = useState([]);
+  const [showAmendForm, setShowAmendForm] = useState(false);
+  const [amendReason, setAmendReason] = useState('');
+  const [amendNewRef, setAmendNewRef] = useState('');
   const [showAddPicker, setShowAddPicker] = useState(false);
   const [pickerSearch, setPickerSearch] = useState('');
   // Lokal state for quantity per linje, slik at vi unngår race mellom onBlur og Lagre.
@@ -743,8 +763,14 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
       setOrder(ord);
       setProducts(prods.items || []);
       setDeliveryDate(ord.delivery_date || '');
+      setReferenceText(ord.reference || '');
       setInternalNotes(ord.internal_notes || '');
       setCustomerNotes(ord.customer_notes || '');
+      // Hent amendments (best-effort)
+      try {
+        const aRes = await authFetch(`/api/v1/orders/${orderId}/amendments`);
+        if (aRes.ok) setAmendments(await aRes.json());
+      } catch { /* ignore */ }
       // Initialiser lokale qty-verdier fra serveren
       const qtyMap = {};
       (ord.lines || []).forEach((l) => { qtyMap[l.id] = l.quantity; });
@@ -835,6 +861,7 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
       // 2) Lagre header-felter
       const body = {};
       if (deliveryDate && deliveryDate !== order.delivery_date) body.delivery_date = deliveryDate;
+      if (referenceText !== (order.reference || '')) body.reference = referenceText || null;
       if (internalNotes !== (order.internal_notes || '')) body.internal_notes = internalNotes;
       if (customerNotes !== (order.customer_notes || '')) body.customer_notes = customerNotes;
       if (Object.keys(body).length > 0) {
@@ -934,6 +961,19 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
                   <div className="input bg-gray-50 font-medium">
                     kr {Number(order?.total_amount_incl_vat || 0).toLocaleString('nb-NO', { minimumFractionDigits: 2 })}
                   </div>
+                </div>
+                <div className="col-span-2">
+                  <label className="label">Referanse (PO-nr / plan / prosjekt)</label>
+                  <input
+                    type="text"
+                    value={referenceText}
+                    onChange={(e) => setReferenceText(e.target.value)}
+                    placeholder="F.eks. Plan-Q4-2026 eller PO-1234"
+                    className="input"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Vises på leveringsbekreftelsen. Endring etter cut-off logges som avvik.
+                  </p>
                 </div>
                 <div className="col-span-2">
                   <label className="label">Interne notater</label>
@@ -1040,6 +1080,89 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
                     );
                   })}
                 </div>
+              </div>
+
+              {/* Avvik / Endringer */}
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-medium text-gray-900">Avvik / Endringer ({amendments.length})</h3>
+                  <button
+                    onClick={() => setShowAmendForm((v) => !v)}
+                    className="text-sm text-amber-700 hover:text-amber-800 flex items-center gap-1"
+                  >
+                    <Plus className="w-4 h-4" /> Registrer avvik
+                  </button>
+                </div>
+                {showAmendForm && (
+                  <div className="mb-3 border rounded-md p-3 bg-amber-50 space-y-2">
+                    <div>
+                      <label className="label">Begrunnelse / årsak</label>
+                      <textarea
+                        value={amendReason}
+                        onChange={(e) => setAmendReason(e.target.value)}
+                        rows={2}
+                        className="input"
+                        placeholder="F.eks. Manglende rundstykker — erstattet med..."
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Ny referanse (valgfri — overskriver ordrereferanse)</label>
+                      <input
+                        type="text"
+                        value={amendNewRef}
+                        onChange={(e) => setAmendNewRef(e.target.value)}
+                        className="input"
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => { setShowAmendForm(false); setAmendReason(''); setAmendNewRef(''); }} className="btn-secondary text-sm">Avbryt</button>
+                      <button
+                        onClick={async () => {
+                          if (!amendReason.trim()) { alert('Begrunnelse er påkrevd'); return; }
+                          try {
+                            const res = await authFetch(`/api/v1/orders/${orderId}/amendments`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                reason: amendReason.trim(),
+                                reference: amendNewRef.trim() || null,
+                              }),
+                            });
+                            if (!res.ok) {
+                              const err = await res.json().catch(() => ({}));
+                              throw new Error(err.detail || 'Kunne ikke lagre avvik');
+                            }
+                            setShowAmendForm(false);
+                            setAmendReason('');
+                            setAmendNewRef('');
+                            await load();
+                          } catch (e) {
+                            alert(`Feil: ${e.message}`);
+                          }
+                        }}
+                        className="btn-primary text-sm"
+                      >
+                        Lagre avvik
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {amendments.length === 0 ? (
+                  <p className="text-sm text-gray-500">Ingen registrerte endringer.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {amendments.map((a) => (
+                      <div key={a.id} className="border rounded p-2 text-sm bg-white">
+                        <div className="flex justify-between text-xs text-gray-500">
+                          <span>{new Date(a.amended_at).toLocaleString('nb-NO')}</span>
+                          {a.reference && <span>Ny ref: <strong>{a.reference}</strong></span>}
+                        </div>
+                        <div className="text-gray-900 mt-1">{a.reason}</div>
+                        {a.changes_summary && <div className="text-gray-600 text-xs mt-1">{a.changes_summary}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}

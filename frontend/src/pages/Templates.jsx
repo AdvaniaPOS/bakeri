@@ -209,6 +209,7 @@ function TemplateModal({ template, customers, products, onClose, onSave }) {
   const { authFetch } = useAuth();
   const [customerId, setCustomerId] = useState(template?.customer_id || '');
   const [name, setName] = useState(template?.name || 'Standard Ukentlig Ordre');
+  const [defaultReference, setDefaultReference] = useState(template?.default_reference || '');
   const [items, setItems] = useState(template?.items || []);
   const [saving, setSaving] = useState(false);
 
@@ -236,8 +237,8 @@ function TemplateModal({ template, customers, products, onClose, onSave }) {
       const method = template ? 'PATCH' : 'POST';
       
       const body = template 
-        ? { name, is_active: true }
-        : { customer_id: parseInt(customerId), name, items: items.filter(i => i.product_id && i.quantity > 0) };
+        ? { name, default_reference: defaultReference || null, is_active: true }
+        : { customer_id: parseInt(customerId), name, default_reference: defaultReference || null, items: items.filter(i => i.product_id && i.quantity > 0) };
 
       const response = await authFetch(url, {
         method,
@@ -285,6 +286,17 @@ function TemplateModal({ template, customers, products, onClose, onSave }) {
             <div>
               <label className="label">Malnavn</label>
               <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="input" />
+            </div>
+            <div className="col-span-2">
+              <label className="label">Standard referanse (valgfri)</label>
+              <input
+                type="text"
+                value={defaultReference}
+                onChange={(e) => setDefaultReference(e.target.value)}
+                className="input"
+                maxLength={255}
+                placeholder="F.eks. Plan-Q4-2026 — settes på alle ordrer fra denne malen"
+              />
             </div>
           </div>
 

@@ -19,8 +19,13 @@
       {% if c.phone %}<div class="small muted">Tlf {{ c.phone }}</div>{% endif %}
     </div>
     <div class="small muted" style="text-align: right;">
-      Ordre #{{ c.order_id }}
-      {% if c.delivery_window_start %}<br>Lev. {{ c.delivery_window_start }}–{{ c.delivery_window_end or '' }}{% endif %}
+      {% if c.order_no_display %}
+        <strong>{{ c.order_no_display }}</strong><br>
+      {% else %}
+        Ordre #{{ c.order_id }}<br>
+      {% endif %}
+      {% if c.reference %}<span>Ref: {{ c.reference }}</span><br>{% endif %}
+      {% if c.delivery_window_start %}Lev. {{ c.delivery_window_start }}&ndash;{{ c.delivery_window_end or '' }}{% endif %}
     </div>
   </div>
 

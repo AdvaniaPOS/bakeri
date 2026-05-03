@@ -301,6 +301,7 @@ class MasterTemplateBase(BaseModel):
     customer_id: int
     name: str = Field(default="Standard Ukentlig Ordre", max_length=255)
     description: Optional[str] = None
+    default_reference: Optional[str] = Field(None, max_length=255)
     is_active: bool = True
 
 
@@ -311,6 +312,7 @@ class MasterTemplateCreate(MasterTemplateBase):
 class MasterTemplateUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
+    default_reference: Optional[str] = Field(None, max_length=255)
     is_active: Optional[bool] = None
 
 
@@ -373,6 +375,7 @@ class OrderLineResponse(OrderLineBase, TimestampSchema):
 class OrderBase(BaseModel):
     customer_id: int
     delivery_date: date
+    reference: Optional[str] = Field(None, max_length=255)
     internal_notes: Optional[str] = None
     customer_notes: Optional[str] = None
 
@@ -384,6 +387,7 @@ class OrderCreate(OrderBase):
 class OrderUpdate(BaseModel):
     status: Optional[OrderStatusEnum] = None
     delivery_date: Optional[date] = None
+    reference: Optional[str] = Field(None, max_length=255)
     internal_notes: Optional[str] = None
     customer_notes: Optional[str] = None
 
@@ -391,6 +395,8 @@ class OrderUpdate(BaseModel):
 class OrderResponse(OrderBase, TimestampSchema):
     id: int
     order_uuid: UUID
+    order_no_seq: Optional[int] = None
+    order_no_display: Optional[str] = None
     status: OrderStatusEnum
     susoft_order_id: Optional[str] = None
     sync_status: SyncStatusEnum
@@ -436,6 +442,29 @@ class OrderListResponse(BaseModel):
 class OrderWithCustomer(OrderResponse):
     """Order response with nested customer details for driver view."""
     customer: CustomerResponse
+
+
+# =============================================================================
+# ORDER AMENDMENTS (endringslogg / avvik)
+# =============================================================================
+
+class OrderAmendmentCreate(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=2000)
+    reference: Optional[str] = Field(None, max_length=255)
+    changes_summary: Optional[str] = Field(None, max_length=4000)
+
+
+class OrderAmendmentResponse(BaseModel):
+    id: int
+    order_id: int
+    amended_at: datetime
+    amended_by_user_id: Optional[int] = None
+    amended_by_name: Optional[str] = None
+    reason: str
+    reference: Optional[str] = None
+    changes_summary: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # =============================================================================

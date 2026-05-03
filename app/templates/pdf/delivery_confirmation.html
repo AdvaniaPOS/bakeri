@@ -1,19 +1,32 @@
 {% extends "base_a4.html" %}
-{% block title %}Leveringsbekreftelse #{{ order.id }}{% endblock %}
+{% block title %}Leveringsbekreftelse {{ order.order_no_display or ('#' ~ order.id) }}{% endblock %}
 {% block report_title %}Leveringsbekreftelse{% endblock %}
 
 {% block content %}
-<h1>Ordre #{{ order.id }}</h1>
-<div class="muted">Levert: {{ order.delivery_date|date_no }}</div>
 
-<div style="margin-top: 14pt; padding: 10pt; background: #ecfdf5; border-left: 4px solid #10b981; border-radius: 4pt;">
-  <h3 style="margin-top: 0;">Mottaker</h3>
-  <div style="font-weight: 600;">{{ customer.name }}</div>
-  {% if customer.company_name %}<div>{{ customer.company_name }}</div>{% endif %}
-  {% if customer.address %}<div class="muted">{{ customer.address }}</div>{% endif %}
+<div style="display: flex; gap: 16pt; margin-bottom: 14pt;">
+  <div style="flex: 1; padding: 10pt 12pt; background: #f3f4f6; border-radius: 4pt;">
+    <div class="small muted">Ordrenr</div>
+    <div style="font-size: 14pt; font-weight: 600; color: #111827;">
+      {{ order.order_no_display or ('#' ~ order.id) }}
+    </div>
+    <div class="small muted" style="margin-top: 6pt;">Leveringsdato</div>
+    <div style="font-weight: 600;">{{ order.delivery_date|date_no }}</div>
+    {% if order.reference %}
+      <div class="small muted" style="margin-top: 6pt;">Referanse</div>
+      <div style="font-weight: 600;">{{ order.reference }}</div>
+    {% endif %}
+  </div>
+  <div style="flex: 1; padding: 10pt 12pt; background: #ecfdf5; border-left: 4px solid #10b981; border-radius: 4pt;">
+    <div class="small muted">Mottaker</div>
+    {% if customer.company_name %}<div style="font-weight: 600;">{{ customer.company_name }}</div>{% endif %}
+    <div>{{ customer.name }}</div>
+    {% if customer.address %}<div class="muted">{{ customer.address }}</div>{% endif %}
+    {% if customer.phone %}<div class="muted small">Tlf {{ customer.phone }}</div>{% endif %}
+  </div>
 </div>
 
-<h2>Levert</h2>
+<h2 style="margin-top: 4pt;">Levert</h2>
 <table>
   <thead>
     <tr>
@@ -27,7 +40,7 @@
     {% for line in lines %}
     <tr>
       <td><span class="checkbox"></span></td>
-      <td>{{ line.product_name }}</td>
+      <td>{{ line.product_name }}{% if line.notes %}<div class="small muted">{{ line.notes }}</div>{% endif %}</td>
       <td class="num">{{ line.quantity }}</td>
       <td>{{ line.unit or '' }}</td>
     </tr>
@@ -35,7 +48,38 @@
   </tbody>
 </table>
 
-<div style="margin-top: 30pt; display: flex; gap: 30pt;">
+{% if allergens_summary %}
+  <p class="small muted" style="margin-top: 8pt;"><strong>Allergener:</strong> {{ allergens_summary }}</p>
+{% endif %}
+
+{% if amendments and amendments|length > 0 %}
+  <h2>Endringer / avvik</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 18%">Dato</th>
+        <th style="width: 18%">Av</th>
+        <th style="width: 18%">Ny ref.</th>
+        <th>Begrunnelse</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in amendments %}
+      <tr>
+        <td class="small">{{ a.amended_at|date_short }}</td>
+        <td class="small">{{ a.amended_by_name or '-' }}</td>
+        <td class="small">{{ a.reference or '-' }}</td>
+        <td class="small">
+          {{ a.reason }}
+          {% if a.changes_summary %}<div class="muted">{{ a.changes_summary }}</div>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+
+<div style="margin-top: 36pt; display: flex; gap: 30pt;">
   <div style="flex: 1;">
     <div style="border-top: 1px solid #6b7280; padding-top: 4pt;">
       <div class="small muted">Mottatt av (signatur)</div>
@@ -48,5 +92,8 @@
   </div>
 </div>
 
-<p class="footer-note">Takk for at du handler hos {{ tenant_name }}.</p>
+<p class="footer-note">
+  Takk for at du handler hos {{ tenant_name }}.
+  {% if tenant_org_number %}Org.nr {{ tenant_org_number }}.{% endif %}
+</p>
 {% endblock %}

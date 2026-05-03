@@ -553,6 +553,12 @@ class MasterTemplate(Base, TimestampMixin, TenantMixin):
         String(255), default="Standard Ukentlig Ordre", nullable=False
     )
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Standard referanse som kopieres til alle ordrer generert fra denne malen.
+    default_reference: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True,
+        comment="Settes paa malen, kopieres til Order.reference ved generering"
+    )
     
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
@@ -644,6 +650,23 @@ class Order(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     order_uuid: Mapped[uuid_module.UUID] = mapped_column(
         GUID(), default=uuid_module.uuid4, unique=True, nullable=False
+    )
+
+    # Per-tenant lopenr — settes ved opprettelse, brukes til pen visning og PDF.
+    # `order_no_display` er prefiks-aar-lopenr, f.eks. "LAM-2026-000123".
+    order_no_seq: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True,
+        comment="Sekvensielt ordrenr per tenant (1, 2, 3...). Tildeles ved opprettelse."
+    )
+    order_no_display: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, index=True,
+        comment="Pent formatert ordrenr (f.eks. 'LAM-2026-000123') vist i UI/PDF."
+    )
+
+    # Kundens referanse / PO-nummer / planreferanse — kopiert fra mal hvis fra MasterTemplate.
+    reference: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True,
+        comment="Valgfri ekstern referanse (kundens PO, plan-navn, prosjekt). Vises pa PDF."
     )
     
     customer_id: Mapped[int] = mapped_column(
@@ -749,10 +772,16 @@ class Order(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     delivery_issues: Mapped[List["DeliveryIssue"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
+    amendments: Mapped[List["OrderAmendment"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan",
+        order_by="OrderAmendment.amended_at"
+    )
     
     __table_args__ = (
         # SuSoft order ID unique within tenant
         UniqueConstraint("tenant_id", "susoft_order_id", name="uq_order_tenant_susoft"),
+        # Per-tenant lopenr unik (manuelt validert i kode siden NULL er tillatt for legacy)
+        UniqueConstraint("tenant_id", "order_no_seq", name="uq_order_tenant_seq"),
         Index("ix_orders_tenant_delivery_status", "tenant_id", "delivery_date", "status"),
         Index("ix_orders_sync_pending", "sync_status"),
         # Indeks for sweep-task som finner ordrer som trenger nytt sync-forsøk
@@ -840,6 +869,58 @@ class OrderLine(Base, TimestampMixin, TenantMixin):
     __table_args__ = (
         CheckConstraint("quantity > 0", name="check_line_quantity_positive"),
         Index("ix_order_lines_order", "order_id"),
+    )
+
+
+# =============================================================================
+# ORDER AMENDMENTS (endringslogg / avvik)
+# =============================================================================
+
+class OrderAmendment(Base, TimestampMixin, TenantMixin):
+    """
+    Endringslogg / avvik paa en ordre.
+
+    Brukes for sporbarhet naar en ordre endres etter at den er bekreftet
+    eller utlevert. Vises pa leveringsbekreftelsen som en revisjonshistorikk.
+
+    Eksempel: Kunde ringer kl 14:00 og ber om 5 ekstra wraps. Operatoer
+    registrerer en amendment med reason="Lagt til 5 wraps etter forespoersel"
+    og evt. ny reference="PO-987".
+    """
+    __tablename__ = "order_amendments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    amended_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    amended_by_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+        comment="User-id paa den som registrerte avviket. NULL = system."
+    )
+    amended_by_name: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True,
+        comment="Snapshotted navn pa person (i tilfelle bruker slettes)"
+    )
+    reason: Mapped[str] = mapped_column(
+        Text, nullable=False,
+        comment="Beskrivelse av avvik / endring"
+    )
+    reference: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True,
+        comment="Ny referanse (oppdaterer Order.reference hvis satt)"
+    )
+    changes_summary: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+        comment="Snapshot av hva som ble endret (fritekst eller JSON)"
+    )
+
+    order: Mapped["Order"] = relationship(back_populates="amendments")
+
+    __table_args__ = (
+        Index("ix_order_amendments_tenant_order", "tenant_id", "order_id"),
     )
 
 

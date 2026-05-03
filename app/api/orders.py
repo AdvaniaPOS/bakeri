@@ -16,17 +16,19 @@ from ..models import (
     Order, OrderLine, OrderStatus, SyncStatus,
     Customer, Product, MasterTemplate, MasterTemplateItem,
     OrderDateOverride, Holiday, CustomerBlockedDate,
-    AuditLog, AuditAction,
+    AuditLog, AuditAction, OrderAmendment,
 )
 from ..schemas import (
     OrderCreate, OrderUpdate, OrderResponse, OrderListResponse,
     OrderLineCreate, OrderLineUpdate, OrderLineResponse,
+    OrderAmendmentCreate, OrderAmendmentResponse,
 )
 from .pricing import get_effective_price
 from ..cutoff import ensure_editable, is_order_locked, stamp_locked_at
 from ..time_utils import now_oslo, today_oslo, to_naive_utc, now_utc
 from ..tenant_scope import get_or_404
 from ..holidays_no import is_closed_day
+from ..services.order_numbering import allocate_order_no
 
 import logging
 logger = logging.getLogger(__name__)
@@ -115,6 +117,7 @@ def _load_order(db: Session, order_id: int, tenant_id: int) -> Order:
         .options(
             selectinload(Order.customer),
             selectinload(Order.lines).selectinload(OrderLine.product),
+            selectinload(Order.amendments),
         )
     ).scalar_one_or_none()
     if not order:
@@ -279,7 +282,9 @@ async def create_order(
         sync_status=SyncStatus.PENDING,
         internal_notes=data.internal_notes,
         customer_notes=data.customer_notes,
+        reference=getattr(data, "reference", None),
     )
+    allocate_order_no(db, tenant, order)
     db.add(order)
     db.flush()
 
@@ -330,11 +335,28 @@ async def update_order(
     order = _load_order(db, order_id, tenant.id)
     ensure_editable(order)
 
+    # Snapshot reference foer endring (for auto-amendment hvis ordre er bekreftet/laast)
+    old_reference = order.reference
+    was_locked_or_confirmed = bool(order.is_locked) or order.status in (
+        OrderStatus.CONFIRMED, OrderStatus.READY_FOR_DELIVERY, OrderStatus.DELIVERED
+    )
+
     update_data = data.model_dump(exclude_unset=True)
     if "status" in update_data:
         update_data["status"] = OrderStatus(update_data["status"])
     for key, value in update_data.items():
         setattr(order, key, value)
+
+    # Auto-log endring av referanse paa ordre som har blitt bekreftet/laast
+    if was_locked_or_confirmed and "reference" in update_data and old_reference != order.reference:
+        amend = OrderAmendment(
+            tenant_id=tenant.id,
+            order_id=order.id,
+            reason=f"Referanse endret fra '{old_reference or '-'}' til '{order.reference or '-'}'",
+            reference=order.reference,
+            amended_by_name=None,
+        )
+        db.add(amend)
 
     if order.sync_status == SyncStatus.SYNCED:
         order.sync_status = SyncStatus.PENDING
@@ -472,6 +494,54 @@ async def delete_order_line(
     db.refresh(order)
     recalculate_order_totals(order)
     db.commit()
+
+
+# =============================================================================
+# AMENDMENTS / AVVIK
+# =============================================================================
+
+@router.get("/{order_id}/amendments", response_model=List[OrderAmendmentResponse])
+async def list_amendments(
+    order_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    order = _load_order(db, order_id, tenant.id)
+    rows = db.execute(
+        select(OrderAmendment)
+        .where(OrderAmendment.tenant_id == tenant.id, OrderAmendment.order_id == order.id)
+        .order_by(OrderAmendment.amended_at)
+    ).scalars().all()
+    return [OrderAmendmentResponse.model_validate(r) for r in rows]
+
+
+@router.post("/{order_id}/amendments", response_model=OrderAmendmentResponse, status_code=status.HTTP_201_CREATED)
+async def create_amendment(
+    order_id: int,
+    data: OrderAmendmentCreate,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Registrer et avvik / endring paa en ordre. Vises paa leveringsbekreftelsen."""
+    from ..dependencies import get_current_user_optional  # local import to avoid cycle
+    order = _load_order(db, order_id, tenant.id)
+
+    # Hvis ny referanse oppgis -> oppdater ordre.reference
+    if data.reference is not None:
+        order.reference = data.reference
+
+    amend = OrderAmendment(
+        tenant_id=tenant.id,
+        order_id=order.id,
+        reason=data.reason,
+        reference=data.reference,
+        changes_summary=data.changes_summary,
+    )
+    db.add(amend)
+    order.is_adhoc_modified = True
+    db.commit()
+    db.refresh(amend)
+    return OrderAmendmentResponse.model_validate(amend)
 
 
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1005,6 +1075,12 @@ def _generate_for_date(db: Session, tenant_id: int, target_date: date, customer_
     if is_closed_day(target_date):
         return {"target_date": target_date.isoformat(), "created_count": 0, "skipped_count": 0, "created": [], "skipped": [], "reason": "closed_day"}
 
+    # Hent tenant-objekt for ordrenr-allokering
+    from ..auth_models import Tenant as _TenantModel
+    tenant = db.get(_TenantModel, tenant_id)
+    if not tenant:
+        return {"target_date": target_date.isoformat(), "created_count": 0, "skipped_count": 0, "created": [], "skipped": [], "reason": "tenant_not_found"}
+
     day_of_week = target_date.weekday() + 1  # 1=Mon..7=Sun
 
     template_query = (
@@ -1066,7 +1142,9 @@ def _generate_for_date(db: Session, tenant_id: int, target_date: date, customer_
             status=OrderStatus.DRAFT,
             sync_status=SyncStatus.PENDING,
             generated_from_template_id=template.id,
+            reference=template.default_reference,
         )
+        allocate_order_no(db, tenant, order)
         db.add(order)
         db.flush()
 
