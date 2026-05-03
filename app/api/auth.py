@@ -545,6 +545,7 @@ async def get_current_user_info(current_user: CurrentUser):
 @router.get("/tenant", response_model=TenantResponse)
 async def get_current_tenant_info(tenant: CurrentTenant):
     """Get current tenant's information."""
+    from ..features import merged_features
     return TenantResponse(
         id=tenant.id,
         name=tenant.name,
@@ -554,7 +555,7 @@ async def get_current_tenant_info(tenant: CurrentTenant):
         is_active=tenant.is_active,
         logo_url=tenant.logo_url,
         primary_color=tenant.primary_color,
-        features_enabled=tenant.features_enabled or {},
+        features_enabled=merged_features(tenant),
         settings=tenant.settings or {},
         legal_name=tenant.legal_name,
         org_number=tenant.org_number,

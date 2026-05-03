@@ -123,6 +123,22 @@ export function AuthProvider({ children }) {
         setTenant(JSON.parse(storedTenant));
         // Bruker er allerede innlogget (refresh/ny fane) — sjekk horisonten.
         triggerHorizonCheck(accessToken);
+        // Hent fersk tenant-info i bakgrunnen så features_enabled er oppdatert
+        // etter at super-admin evt. har skrudd noe av/på.
+        fetch(`${API_BASE}/auth/tenant`, {
+          headers: { 'Authorization': `Bearer ${accessToken}` },
+        })
+          .then(async (r) => {
+            if (!r.ok) return;
+            const data = await parseResponseSafely(r);
+            if (!data) return;
+            setTenant((prev) => {
+              const next = { ...(prev || {}), ...data };
+              try { localStorage.setItem(TENANT_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+              return next;
+            });
+          })
+          .catch(() => { /* ignore */ });
       } catch (e) {
         console.error('Failed to parse stored auth data:', e);
         clearAuthData();
@@ -348,6 +364,29 @@ export function AuthProvider({ children }) {
     });
   }, []);
 
+  // Hent fersk tenant-info fra serveren (f.eks. for å oppdatere features_enabled
+  // når super-admin har skrudd noe av/på).
+  const refreshTenant = useCallback(async () => {
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (!token) return null;
+    try {
+      const resp = await fetch(`${API_BASE}/auth/tenant`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!resp.ok) return null;
+      const data = await parseResponseSafely(resp);
+      if (!data) return null;
+      setTenant((prev) => {
+        const next = { ...(prev || {}), ...data };
+        try { localStorage.setItem(TENANT_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+        return next;
+      });
+      return data;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // Sjekk om tenant har en feature aktivert (default true hvis ukjent)
   const hasFeature = useCallback((key) => {
     if (!tenant) return true;
@@ -420,6 +459,7 @@ export function AuthProvider({ children }) {
     dismissNotification,
     triggerHorizonCheck,
     updateTenant,
+    refreshTenant,
     hasFeature,
     isImpersonating,
     beginImpersonation,

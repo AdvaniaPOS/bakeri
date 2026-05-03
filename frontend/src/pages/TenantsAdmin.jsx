@@ -19,7 +19,7 @@ const EMPTY_FORM = {
 };
 
 export default function TenantsAdmin() {
-  const { authFetch, user, beginImpersonation } = useAuth();
+  const { authFetch, user, beginImpersonation, tenant: currentTenant, refreshTenant } = useAuth();
   const [tenants, setTenants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -117,6 +117,11 @@ export default function TenantsAdmin() {
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      // Hvis vi endret features for vår egen tenant (f.eks. impersonering),
+      // oppdater lokal tenant-state slik at sidebaren skjuler funksjoner uten refresh.
+      if (currentTenant && featureTenant.id === currentTenant.id && refreshTenant) {
+        try { await refreshTenant(); } catch { /* ignore */ }
+      }
       setFeatureTenant(null);
     } catch (e) {
       setFeatureError(e.message);
