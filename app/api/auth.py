@@ -55,6 +55,15 @@ def _tenant_to_dict(tenant) -> dict:
         "primary_color": getattr(tenant, "primary_color", None),
         "features_enabled": merged_features(tenant),
         "settings": getattr(tenant, "settings", None) or {},
+        # Firmaopplysninger (vises i UI + brukes i PDF-rapporter)
+        "legal_name": getattr(tenant, "legal_name", None),
+        "org_number": getattr(tenant, "org_number", None),
+        "email": getattr(tenant, "email", None),
+        "phone": getattr(tenant, "phone", None),
+        "street_address": getattr(tenant, "street_address", None),
+        "postal_code": getattr(tenant, "postal_code", None),
+        "city": getattr(tenant, "city", None),
+        "country": getattr(tenant, "country", None),
     }
 
 
@@ -153,6 +162,28 @@ class TenantResponse(BaseModel):
     primary_color: Optional[str] = None
     features_enabled: Optional[dict] = None
     settings: Optional[dict] = None
+    # Firmaopplysninger
+    legal_name: Optional[str] = None
+    org_number: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    street_address: Optional[str] = None
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+
+
+class TenantInfoUpdateRequest(BaseModel):
+    """Felter en TENANT_ADMIN/SUPER_ADMIN kan oppdatere paa egen tenant."""
+    name: Optional[str] = Field(default=None, min_length=2, max_length=255)
+    legal_name: Optional[str] = Field(default=None, max_length=255)
+    org_number: Optional[str] = Field(default=None, max_length=50)
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = Field(default=None, max_length=50)
+    street_address: Optional[str] = Field(default=None, max_length=500)
+    postal_code: Optional[str] = Field(default=None, max_length=20)
+    city: Optional[str] = Field(default=None, max_length=100)
+    country: Optional[str] = Field(default=None, max_length=100)
 
 
 # =============================================================================
@@ -525,6 +556,67 @@ async def get_current_tenant_info(tenant: CurrentTenant):
         primary_color=tenant.primary_color,
         features_enabled=tenant.features_enabled or {},
         settings=tenant.settings or {},
+        legal_name=tenant.legal_name,
+        org_number=tenant.org_number,
+        email=tenant.email,
+        phone=tenant.phone,
+        street_address=tenant.street_address,
+        postal_code=tenant.postal_code,
+        city=tenant.city,
+        country=tenant.country,
+    )
+
+
+@router.patch("/tenant", response_model=TenantResponse)
+async def update_current_tenant_info(
+    payload: TenantInfoUpdateRequest,
+    current_user: CurrentUser,
+    tenant: CurrentTenant,
+    db: Session = Depends(get_db),
+):
+    """Oppdater firmaopplysninger paa egen tenant (admin only).
+
+    Brukes paa rapporter (navn, org.nr, adresse) og som mottaker for e-post-rapporter.
+    """
+    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN):
+        raise HTTPException(status_code=403, detail="Kun administratorer kan endre firmaopplysninger")
+
+    # Sjekk org.nr unik (om endret)
+    if payload.org_number is not None and payload.org_number != (tenant.org_number or ""):
+        existing = db.query(Tenant).filter(
+            Tenant.org_number == payload.org_number,
+            Tenant.id != tenant.id,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="Org.nr er allerede registrert paa annen tenant")
+
+    for field in ("name", "legal_name", "org_number", "email", "phone",
+                  "street_address", "postal_code", "city", "country"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(tenant, field, value or None)
+
+    db.commit()
+    db.refresh(tenant)
+    return TenantResponse(
+        id=tenant.id,
+        name=tenant.name,
+        slug=tenant.slug,
+        subscription_plan=tenant.subscription_plan.value,
+        subscription_status=tenant.subscription_status.value,
+        is_active=tenant.is_active,
+        logo_url=tenant.logo_url,
+        primary_color=tenant.primary_color,
+        features_enabled=tenant.features_enabled or {},
+        settings=tenant.settings or {},
+        legal_name=tenant.legal_name,
+        org_number=tenant.org_number,
+        email=tenant.email,
+        phone=tenant.phone,
+        street_address=tenant.street_address,
+        postal_code=tenant.postal_code,
+        city=tenant.city,
+        country=tenant.country,
     )
 
 

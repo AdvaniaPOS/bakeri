@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon, Download, UserPlus, Trash2, Mail, X as XIcon } from 'lucide-react';
+import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon, Download, UserPlus, Trash2, Mail, X as XIcon, Building2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import TwoFactorCard from '../components/TwoFactorCard';
 
@@ -288,6 +288,130 @@ function UsersCard({ authFetch, currentUser }) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function CompanyInfoCard({ authFetch, tenant, updateTenant }) {
+  const [form, setForm] = useState({
+    name: tenant?.name || '',
+    legal_name: tenant?.legal_name || '',
+    org_number: tenant?.org_number || '',
+    email: tenant?.email || '',
+    phone: tenant?.phone || '',
+    street_address: tenant?.street_address || '',
+    postal_code: tenant?.postal_code || '',
+    city: tenant?.city || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => {
+    setForm({
+      name: tenant?.name || '',
+      legal_name: tenant?.legal_name || '',
+      org_number: tenant?.org_number || '',
+      email: tenant?.email || '',
+      phone: tenant?.phone || '',
+      street_address: tenant?.street_address || '',
+      postal_code: tenant?.postal_code || '',
+      city: tenant?.city || '',
+    });
+  }, [tenant?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setMsg(null);
+    try {
+      const resp = await authFetch('/api/v1/auth/tenant', {
+        method: 'PATCH',
+        body: form,
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.detail || `HTTP ${resp.status}`);
+      updateTenant({
+        name: data.name,
+        legal_name: data.legal_name,
+        org_number: data.org_number,
+        email: data.email,
+        phone: data.phone,
+        street_address: data.street_address,
+        postal_code: data.postal_code,
+        city: data.city,
+        country: data.country,
+      });
+      setMsg({ success: true, text: 'Firmaopplysninger lagret' });
+    } catch (err) {
+      setMsg({ success: false, text: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+          <Building2 className="w-5 h-5 text-emerald-600" />
+        </div>
+        <div>
+          <h2 className="font-semibold text-gray-900">Firmaopplysninger</h2>
+          <p className="text-sm text-gray-500">Vises i menyen og pa alle PDF-rapporter (ogsa avsender/mottaker for e-post)</p>
+        </div>
+      </div>
+
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Firmanavn (vises i menyen) *</label>
+            <input required type="text" value={form.name} onChange={set('name')} className="input w-full" placeholder="F.eks. Lampeland Bakeri" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Juridisk navn</label>
+            <input type="text" value={form.legal_name} onChange={set('legal_name')} className="input w-full" placeholder="F.eks. Lampeland Bakeri AS" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Org.nr</label>
+            <input type="text" value={form.org_number} onChange={set('org_number')} className="input w-full" placeholder="9 siffer" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">E-post (rapporter sendes hit)</label>
+            <input type="email" value={form.email} onChange={set('email')} className="input w-full" placeholder="post@firma.no" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Telefon</label>
+            <input type="text" value={form.phone} onChange={set('phone')} className="input w-full" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Gateadresse</label>
+            <input type="text" value={form.street_address} onChange={set('street_address')} className="input w-full" placeholder="Hovedgata 1" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Postnummer</label>
+            <input type="text" value={form.postal_code} onChange={set('postal_code')} className="input w-full" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Sted</label>
+            <input type="text" value={form.city} onChange={set('city')} className="input w-full" />
+          </div>
+        </div>
+
+        {msg && (
+          <div className={`p-2 rounded text-sm ${msg.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+            {msg.text}
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button type="submit" disabled={saving} className="btn-primary text-sm flex items-center gap-2">
+            <Save className="w-4 h-4" />
+            {saving ? 'Lagrer...' : 'Lagre firmaopplysninger'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -801,6 +925,11 @@ export default function Settings() {
               )}
             </div>
           </div>
+        )}
+
+        {/* Firmaopplysninger (kun TENANT_ADMIN+) */}
+        {isAdmin() && (
+          <CompanyInfoCard authFetch={authFetch} tenant={tenant} updateTenant={updateTenant} />
         )}
 
         {/* Brukere (kun TENANT_ADMIN+) */}
