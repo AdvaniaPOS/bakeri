@@ -8,7 +8,7 @@ Wrapper rundt `app.auth` (kjerne-utilities for hashing/JWT) og eksponerer:
 - User invitation management
 """
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.orm import Session
@@ -876,6 +876,159 @@ async def revoke_invitation(
     db.commit()
     
     return {"message": "Invitation revoked"}
+
+
+# =============================================================================
+# USER MANAGEMENT (per tenant) - kun TENANT_ADMIN/SUPER_ADMIN
+# =============================================================================
+
+
+class UserSummary(BaseModel):
+    id: int
+    email: str
+    first_name: str
+    last_name: str
+    role: str
+    is_active: bool
+    email_verified: bool
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class UserUpdateRequest(BaseModel):
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+
+def _require_tenant_admin(current_user: User) -> None:
+    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Kun administratorer kan administrere brukere",
+        )
+
+
+@router.get("/users", response_model=List[UserSummary])
+async def list_tenant_users(
+    current_user: CurrentUser,
+    tenant: CurrentTenant,
+    db: Session = Depends(get_db),
+):
+    """List alle brukere i den aktive tenanten. Krever TENANT_ADMIN+."""
+    _require_tenant_admin(current_user)
+    users = (
+        db.query(User)
+        .filter(User.tenant_id == tenant.id, User.is_deleted == False)
+        .order_by(User.created_at.desc())
+        .all()
+    )
+    return [
+        UserSummary(
+            id=u.id,
+            email=u.email,
+            first_name=u.first_name,
+            last_name=u.last_name,
+            role=u.role.value,
+            is_active=u.is_active,
+            email_verified=u.email_verified,
+            created_at=u.created_at,
+        )
+        for u in users
+    ]
+
+
+@router.patch("/users/{user_id}", response_model=UserSummary)
+async def update_tenant_user(
+    user_id: int,
+    payload: UserUpdateRequest,
+    current_user: CurrentUser,
+    tenant: CurrentTenant,
+    db: Session = Depends(get_db),
+):
+    """Endre rolle / aktiv-status / navn for bruker i samme tenant."""
+    _require_tenant_admin(current_user)
+
+    target = db.query(User).filter(
+        User.id == user_id,
+        User.tenant_id == tenant.id,
+        User.is_deleted == False,
+    ).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Bruker ikke funnet")
+
+    if target.id == current_user.id and payload.is_active is False:
+        raise HTTPException(status_code=400, detail="Du kan ikke deaktivere deg selv")
+
+    if payload.role is not None:
+        # Bare SUPER_ADMIN kan opprette nye SUPER_ADMIN via dette endepunktet
+        if payload.role == UserRole.SUPER_ADMIN and current_user.role != UserRole.SUPER_ADMIN:
+            raise HTTPException(status_code=403, detail="Kun SUPER_ADMIN kan tildele super-admin-rolle")
+        # Tenant-admin kan ikke degradere/promotere super-admin
+        if target.role == UserRole.SUPER_ADMIN and current_user.role != UserRole.SUPER_ADMIN:
+            raise HTTPException(status_code=403, detail="Kan ikke endre rolle pa super-admin")
+        target.role = payload.role
+    if payload.is_active is not None:
+        target.is_active = payload.is_active
+    if payload.first_name is not None:
+        target.first_name = payload.first_name.strip() or target.first_name
+    if payload.last_name is not None:
+        target.last_name = payload.last_name.strip() or target.last_name
+
+    db.commit()
+    db.refresh(target)
+    return UserSummary(
+        id=target.id,
+        email=target.email,
+        first_name=target.first_name,
+        last_name=target.last_name,
+        role=target.role.value,
+        is_active=target.is_active,
+        email_verified=target.email_verified,
+        created_at=target.created_at,
+    )
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def deactivate_tenant_user(
+    user_id: int,
+    current_user: CurrentUser,
+    tenant: CurrentTenant,
+    db: Session = Depends(get_db),
+):
+    """
+    Deaktiverer (soft-delete) en bruker. Returnerer 204.
+
+    Sletter ogsa alle aktive refresh-tokens slik at brukeren logges ut.
+    """
+    _require_tenant_admin(current_user)
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Du kan ikke slette deg selv")
+
+    target = db.query(User).filter(
+        User.id == user_id,
+        User.tenant_id == tenant.id,
+        User.is_deleted == False,
+    ).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Bruker ikke funnet")
+
+    if target.role == UserRole.SUPER_ADMIN and current_user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(status_code=403, detail="Kan ikke slette super-admin")
+
+    target.is_active = False
+    target.is_deleted = True
+    target.deleted_at = datetime.utcnow()
+
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == target.id,
+        RefreshToken.is_revoked == False,
+    ).update({"is_revoked": True, "revoked_at": datetime.utcnow()})
+    db.commit()
+    return None
 
 
 # =============================================================================

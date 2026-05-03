@@ -18,6 +18,10 @@ const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 const USER_KEY = 'user';
 const TENANT_KEY = 'tenant';
+// Sett naar SUPER_ADMIN logger inn paa en kunde-tenant via 'impersonate'.
+// Skiller "super-admin pa egen master-portal" fra "super-admin inne hos en kunde".
+const IMPERSONATING_KEY = 'is_impersonating';
+const IMPERSONATING_ORIG_KEY = 'impersonating_original_session';
 
 async function parseResponseSafely(response) {
   const text = await response.text();
@@ -38,6 +42,9 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [notification, setNotification] = useState(null); // { type, message }
+  const [isImpersonating, setIsImpersonating] = useState(
+    () => localStorage.getItem(IMPERSONATING_KEY) === '1'
+  );
 
   // Clear all auth data
   const clearAuthData = useCallback(() => {
@@ -45,8 +52,11 @@ export function AuthProvider({ children }) {
     localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem(TENANT_KEY);
+    localStorage.removeItem(IMPERSONATING_KEY);
+    localStorage.removeItem(IMPERSONATING_ORIG_KEY);
     setUser(null);
     setTenant(null);
+    setIsImpersonating(false);
   }, []);
 
   // Trigger periodeplan-horisont-sjekk i bakgrunnen.
@@ -346,6 +356,52 @@ export function AuthProvider({ children }) {
     return true; // ukjent feature -> ikke skjul
   }, [tenant]);
 
+  // Start impersoneringsokt (kalles fra TenantsAdmin etter POST /impersonate)
+  // Lagrer naavaerende sesjon slik at vi kan returnere uten ny innlogging.
+  const beginImpersonation = useCallback((tokens, newUser, newTenant) => {
+    const original = {
+      access_token: localStorage.getItem(ACCESS_TOKEN_KEY),
+      refresh_token: localStorage.getItem(REFRESH_TOKEN_KEY),
+      user: localStorage.getItem(USER_KEY),
+      tenant: localStorage.getItem(TENANT_KEY),
+    };
+    try { localStorage.setItem(IMPERSONATING_ORIG_KEY, JSON.stringify(original)); } catch { /* ignore */ }
+    localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token);
+    localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
+    localStorage.setItem(USER_KEY, JSON.stringify(newUser));
+    localStorage.setItem(TENANT_KEY, JSON.stringify(newTenant));
+    localStorage.setItem(IMPERSONATING_KEY, '1');
+    setUser(newUser);
+    setTenant(newTenant);
+    setIsImpersonating(true);
+  }, []);
+
+  // Avslutt impersoneringsokt og gjenopprett original sesjon (uten ny innlogging)
+  const endImpersonation = useCallback(() => {
+    const raw = localStorage.getItem(IMPERSONATING_ORIG_KEY);
+    if (!raw) {
+      clearAuthData();
+      window.location.href = '/login';
+      return;
+    }
+    try {
+      const orig = JSON.parse(raw);
+      if (orig.access_token) localStorage.setItem(ACCESS_TOKEN_KEY, orig.access_token);
+      if (orig.refresh_token) localStorage.setItem(REFRESH_TOKEN_KEY, orig.refresh_token);
+      if (orig.user) localStorage.setItem(USER_KEY, orig.user);
+      if (orig.tenant) localStorage.setItem(TENANT_KEY, orig.tenant);
+      localStorage.removeItem(IMPERSONATING_KEY);
+      localStorage.removeItem(IMPERSONATING_ORIG_KEY);
+      setUser(orig.user ? JSON.parse(orig.user) : null);
+      setTenant(orig.tenant ? JSON.parse(orig.tenant) : null);
+      setIsImpersonating(false);
+      window.location.href = '/admin/tenants';
+    } catch {
+      clearAuthData();
+      window.location.href = '/login';
+    }
+  }, [clearAuthData]);
+
   const value = {
     user,
     tenant,
@@ -365,6 +421,9 @@ export function AuthProvider({ children }) {
     triggerHorizonCheck,
     updateTenant,
     hasFeature,
+    isImpersonating,
+    beginImpersonation,
+    endImpersonation,
   };
 
   return (

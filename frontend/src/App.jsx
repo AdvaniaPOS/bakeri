@@ -43,6 +43,17 @@ function PublicRoute({ children }) {
   return children;
 }
 
+// Dashboard-rute med super-admin redirect:
+// SUPER_ADMIN i master-modus skal automatisk sendes til /admin/tenants
+function DashboardOrAdminRedirect() {
+  const { user, isImpersonating } = useAuth();
+  const role = (user?.role || '').toLowerCase();
+  if (role === 'super_admin' && !isImpersonating) {
+    return <Navigate to="/admin/tenants" replace />;
+  }
+  return <Dashboard />;
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -79,7 +90,7 @@ function AppRoutes() {
           <Layout />
         </ProtectedRoute>
       }>
-        <Route index element={<Dashboard />} />
+        <Route index element={<DashboardOrAdminRedirect />} />
         <Route path="produkter" element={<Products />} />
         <Route path="kunder" element={<Customers />} />
         <Route path="bestillinger" element={<Orders />} />

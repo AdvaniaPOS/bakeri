@@ -19,7 +19,7 @@ const EMPTY_FORM = {
 };
 
 export default function TenantsAdmin() {
-  const { authFetch, user } = useAuth();
+  const { authFetch, user, beginImpersonation } = useAuth();
   const [tenants, setTenants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -230,10 +230,11 @@ export default function TenantsAdmin() {
       const resp = await authFetch(`/api/v1/admin/tenants/${t.id}/impersonate`, { method: 'POST' });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('refresh_token', data.refresh_token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      localStorage.setItem('tenant', JSON.stringify(data.tenant));
+      beginImpersonation(
+        { access_token: data.access_token, refresh_token: data.refresh_token },
+        data.user,
+        data.tenant,
+      );
       window.location.href = '/';
     } catch (e) {
       alert(e.message);

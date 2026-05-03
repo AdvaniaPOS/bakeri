@@ -1,7 +1,296 @@
 import { useState, useEffect } from 'react';
-import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon, Download } from 'lucide-react';
+import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon, Download, UserPlus, Trash2, Mail, X as XIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import TwoFactorCard from '../components/TwoFactorCard';
+
+const ROLE_OPTIONS = [
+  { value: 'tenant_admin', label: 'Administrator' },
+  { value: 'manager', label: 'Leder' },
+  { value: 'driver', label: 'Sjafor' },
+  { value: 'viewer', label: 'Leser' },
+];
+
+function UsersCard({ authFetch, currentUser }) {
+  const [users, setUsers] = useState([]);
+  const [invitations, setInvitations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ email: '', role: 'viewer' });
+  const [inviting, setInviting] = useState(false);
+  const [inviteMsg, setInviteMsg] = useState(null);
+
+  const reload = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const [u, i] = await Promise.all([
+        authFetch('/api/v1/auth/users'),
+        authFetch('/api/v1/auth/invitations'),
+      ]);
+      if (u.ok) setUsers(await u.json());
+      if (i.ok) setInvitations(await i.json());
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const submitInvite = async (e) => {
+    e.preventDefault();
+    setInviting(true);
+    setInviteMsg(null);
+    try {
+      const resp = await authFetch('/api/v1/auth/invite', {
+        method: 'POST',
+        body: { email: inviteForm.email.trim().toLowerCase(), role: inviteForm.role },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.detail || `HTTP ${resp.status}`);
+      setInviteMsg({ success: true, text: `Invitasjon sendt til ${inviteForm.email}` });
+      setInviteForm({ email: '', role: 'viewer' });
+      setShowInvite(false);
+      reload();
+    } catch (e) {
+      setInviteMsg({ success: false, text: e.message });
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const updateRole = async (u, newRole) => {
+    if (u.role === newRole) return;
+    try {
+      const resp = await authFetch(`/api/v1/auth/users/${u.id}`, {
+        method: 'PATCH',
+        body: { role: newRole },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      reload();
+    } catch (e) {
+      alert('Kunne ikke endre rolle: ' + e.message);
+    }
+  };
+
+  const toggleActive = async (u) => {
+    try {
+      const resp = await authFetch(`/api/v1/auth/users/${u.id}`, {
+        method: 'PATCH',
+        body: { is_active: !u.is_active },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      reload();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const deleteUser = async (u) => {
+    if (!confirm(`Slette brukeren "${u.first_name} ${u.last_name}" (${u.email})?`)) return;
+    try {
+      const resp = await authFetch(`/api/v1/auth/users/${u.id}`, { method: 'DELETE' });
+      if (!resp.ok && resp.status !== 204) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      reload();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const revokeInvite = async (inv) => {
+    if (!confirm(`Trekke tilbake invitasjon til ${inv.email}?`)) return;
+    try {
+      const resp = await authFetch(`/api/v1/auth/invitations/${inv.id}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      reload();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+            <Users className="w-5 h-5 text-blue-600" />
+          </div>
+          <div>
+            <h2 className="font-semibold text-gray-900">Brukere</h2>
+            <p className="text-sm text-gray-500">Inviter kollegaer og styr roller</p>
+          </div>
+        </div>
+        <button onClick={() => setShowInvite(s => !s)} className="btn btn-primary">
+          <UserPlus className="w-4 h-4" /> Inviter bruker
+        </button>
+      </div>
+
+      {showInvite && (
+        <form onSubmit={submitInvite} className="mb-4 p-3 border border-gray-200 rounded-lg bg-gray-50 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">E-post</label>
+            <input
+              type="email"
+              required
+              value={inviteForm.email}
+              onChange={(e) => setInviteForm(f => ({ ...f, email: e.target.value }))}
+              className="input w-full"
+              placeholder="navn@firma.no"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Rolle</label>
+            <select
+              value={inviteForm.role}
+              onChange={(e) => setInviteForm(f => ({ ...f, role: e.target.value }))}
+              className="input w-full"
+            >
+              {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+          </div>
+          <div className="flex items-end gap-2">
+            <button type="submit" disabled={inviting} className="btn btn-primary">
+              {inviting ? 'Sender...' : 'Send invitasjon'}
+            </button>
+            <button type="button" onClick={() => { setShowInvite(false); setInviteMsg(null); }} className="btn-secondary">
+              Avbryt
+            </button>
+          </div>
+        </form>
+      )}
+
+      {inviteMsg && (
+        <div className={`mb-3 p-2 rounded text-sm ${inviteMsg.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+          {inviteMsg.text}
+        </div>
+      )}
+
+      {err && <div className="mb-3 p-2 rounded bg-red-50 text-red-800 text-sm">{err}</div>}
+
+      {loading ? (
+        <div className="text-sm text-gray-500">Laster...</div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-gray-500 border-b">
+                  <th className="py-2 pr-3">Navn</th>
+                  <th className="py-2 pr-3">E-post</th>
+                  <th className="py-2 pr-3">Rolle</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => {
+                  const isSelf = u.id === currentUser?.id;
+                  const isSuper = u.role === 'super_admin';
+                  return (
+                    <tr key={u.id} className="border-b last:border-b-0">
+                      <td className="py-2 pr-3 font-medium text-gray-900">
+                        {u.first_name} {u.last_name}
+                        {isSelf && <span className="text-xs text-gray-400 ml-1">(deg)</span>}
+                      </td>
+                      <td className="py-2 pr-3 text-gray-600">{u.email}</td>
+                      <td className="py-2 pr-3">
+                        {isSuper ? (
+                          <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-700 text-xs font-medium">Super-admin</span>
+                        ) : (
+                          <select
+                            value={u.role}
+                            onChange={(e) => updateRole(u, e.target.value)}
+                            className="input !py-0.5 !text-xs"
+                            disabled={isSelf}
+                          >
+                            {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                          </select>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {u.is_active ? (
+                          <span className="text-green-700 text-xs font-medium">Aktiv</span>
+                        ) : (
+                          <span className="text-gray-400 text-xs">Deaktivert</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-right">
+                        {!isSelf && !isSuper && (
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => toggleActive(u)}
+                              className="btn-secondary !py-1 !text-xs"
+                              title={u.is_active ? 'Deaktiver' : 'Aktiver'}
+                            >
+                              {u.is_active ? 'Deaktiver' : 'Aktiver'}
+                            </button>
+                            <button
+                              onClick={() => deleteUser(u)}
+                              className="btn-secondary !py-1 !text-xs !text-red-600"
+                              title="Slett bruker"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {users.length === 0 && (
+                  <tr><td colSpan={5} className="py-3 text-center text-gray-400">Ingen brukere</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {invitations.filter(i => i.status === 'pending').length > 0 && (
+            <div className="mt-5">
+              <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
+                <Mail className="w-4 h-4" /> Ventende invitasjoner
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <tbody>
+                    {invitations.filter(i => i.status === 'pending').map(inv => (
+                      <tr key={inv.id} className="border-b last:border-b-0">
+                        <td className="py-2 pr-3 text-gray-700">{inv.email}</td>
+                        <td className="py-2 pr-3 text-xs text-gray-500">{ROLE_OPTIONS.find(r => r.value === inv.role)?.label || inv.role}</td>
+                        <td className="py-2 pr-3 text-right">
+                          <button
+                            onClick={() => revokeInvite(inv)}
+                            className="btn-secondary !py-1 !text-xs !text-red-600"
+                            title="Trekk tilbake invitasjon"
+                          >
+                            <XIcon className="w-3.5 h-3.5" /> Trekk tilbake
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function Settings() {
   const { authFetch, user, tenant, updateTenant, isAdmin } = useAuth();
@@ -512,6 +801,11 @@ export default function Settings() {
               )}
             </div>
           </div>
+        )}
+
+        {/* Brukere (kun TENANT_ADMIN+) */}
+        {isAdmin() && (
+          <UsersCard authFetch={authFetch} currentUser={user} />
         )}
 
         {/* GDPR-eksport (kun TENANT_ADMIN+) */}

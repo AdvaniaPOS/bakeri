@@ -22,7 +22,8 @@ import {
   Moon,
   Sun,
   Menu,
-  X
+  X,
+  ShieldAlert
 } from 'lucide-react';
 
 const navigation = [
@@ -46,9 +47,13 @@ const superAdminNavigation = [
 ];
 
 export default function Layout() {
-  const { user, tenant, logout, notification, dismissNotification, hasFeature } = useAuth();
+  const { user, tenant, logout, notification, dismissNotification, hasFeature, isImpersonating, endImpersonation } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const role = (user?.role || '').toLowerCase();
+  // SUPER_ADMIN i master-modus (ikke impersonert) skal kun se admin-meny.
+  const isSuperAdminMaster = role === 'super_admin' && !isImpersonating;
 
   // Mobil-meny (drawer)
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -187,7 +192,7 @@ export default function Layout() {
 
         {/* Navigation */}
         <nav className="flex-1 px-2 pt-1 space-y-0.5 overflow-y-auto">
-          {navigation.filter(item => {
+          {!isSuperAdminMaster && navigation.filter(item => {
             if (item.feature && !hasFeature(item.feature)) return false;
             if (item.roles && !item.roles.includes((user?.role || '').toUpperCase())) return false;
             return true;
@@ -204,9 +209,9 @@ export default function Layout() {
               <span className="truncate">{item.name}</span>
             </NavLink>
           ))}
-          {(user?.role || '').toLowerCase() === 'super_admin' && (
+          {role === 'super_admin' && (
             <>
-              <div className="sidebar-section-label">Super-admin</div>
+              {!isSuperAdminMaster && <div className="sidebar-section-label">Super-admin</div>}
               {superAdminNavigation.map((item) => (
                 <NavLink
                   key={item.name}
@@ -252,6 +257,22 @@ export default function Layout() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto app-main pt-12 lg:pt-0">
+        {isImpersonating && (
+          <div className="sticky top-0 z-30 bg-amber-500 text-white px-4 py-2 flex items-center justify-between gap-3 text-sm shadow-md">
+            <div className="flex items-center gap-2 min-w-0">
+              <ShieldAlert className="w-4 h-4 flex-shrink-0" />
+              <span className="truncate">
+                Support-okt: du er logget inn som <strong>{tenant?.name || 'kunde'}</strong>
+              </span>
+            </div>
+            <button
+              onClick={() => endImpersonation()}
+              className="flex-shrink-0 bg-white text-amber-700 hover:bg-amber-50 px-3 py-1 rounded-md text-xs font-semibold"
+            >
+              Avslutt support-okt
+            </button>
+          </div>
+        )}
         <div className="lg:border-l border-gray-200 min-h-full app-divider">
           <Outlet />
         </div>
