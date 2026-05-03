@@ -6,13 +6,18 @@ set -euo pipefail
 REPO_DIR="/home/poshubadmin/bakeri"
 SERVICE_DIR="/etc/systemd/system"
 
-echo "==> Installerer redis-server"
-apt-get update -qq
-apt-get install -y -qq redis-server
+echo "==> Sjekker at redis er tilgjengelig pa 127.0.0.1:6379 (forventet i docker)"
+if ! redis-cli -h 127.0.0.1 -p 6379 ping >/dev/null 2>&1; then
+  echo "FEIL: redis svarer ikke pa 127.0.0.1:6379. Sjekk at docker-containeren kjorer." >&2
+  exit 1
+fi
+echo "redis OK"
 
-echo "==> Starter redis"
-systemctl enable --now redis-server
-systemctl is-active redis-server
+# Disable apt-redis hvis den finnes og er failed (port-konflikt med docker)
+if systemctl list-unit-files | grep -q '^redis-server.service'; then
+  systemctl disable --now redis-server.service 2>/dev/null || true
+  systemctl reset-failed redis-server.service 2>/dev/null || true
+fi
 
 echo "==> Sikrer at celery+redis-klient er installert i venv"
 sudo -u poshubadmin "$REPO_DIR/.venv/bin/pip" install -q -r "$REPO_DIR/requirements.txt"
@@ -28,7 +33,7 @@ systemctl enable --now bakeri-beat.service
 
 sleep 2
 echo "==> Status:"
-systemctl is-active redis-server bakeri-worker bakeri-beat
+systemctl is-active bakeri-worker bakeri-beat
 echo "==> Ferdig. Sjekk logger med:"
 echo "   journalctl -u bakeri-worker -f"
 echo "   journalctl -u bakeri-beat -f"

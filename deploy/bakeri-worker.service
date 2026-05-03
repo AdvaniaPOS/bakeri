@@ -1,7 +1,7 @@
 [Unit]
 Description=Advania Bakeri Celery worker
-After=network.target redis-server.service
-Requires=redis-server.service
+After=network.target docker.service
+# Redis kjorer i docker (betala-link-redis-1) pa port 6379
 
 [Service]
 Type=simple
