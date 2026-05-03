@@ -1,0 +1,16 @@
+[Unit]
+Description=Advania Bakeri Celery beat scheduler
+After=network.target redis-server.service
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=poshubadmin
+WorkingDirectory=/home/poshubadmin/bakeri
+EnvironmentFile=/home/poshubadmin/bakeri/.env
+ExecStart=/home/poshubadmin/bakeri/.venv/bin/celery -A app.tasks beat --loglevel=info --schedule=/home/poshubadmin/bakeri/celerybeat-schedule
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
