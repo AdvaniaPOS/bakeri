@@ -495,6 +495,8 @@ function PortalAccessModal({ customer, onClose, authFetch }) {
   // user form
   const [newUser, setNewUser] = useState({ email: '', first_name: '', last_name: '', phone: '', initial_password: '' });
   const [targetCustomerId, setTargetCustomerId] = useState(customer.id);
+  // Vist passord etter oppretting / nullstilling (vises én gang)
+  const [revealedPassword, setRevealedPassword] = useState(null); // { email, password }
 
   const reload = async () => {
     setLoading(true);
@@ -548,8 +550,27 @@ function PortalAccessModal({ customer, onClose, authFetch }) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.detail || 'Klarte ikke opprette portal-bruker');
       }
+      setRevealedPassword({ email: newUser.email, password: newUser.initial_password });
       setNewUser({ email: '', first_name: '', last_name: '', phone: '', initial_password: '' });
       reload();
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleResetPassword = async (user, customerIdForUser) => {
+    if (!confirm(`Nullstille passord for ${user.email}? Brukeren må få det nye passordet av deg.`)) return;
+    setError(null);
+    try {
+      const res = await authFetch(`/api/v1/customers/${customerIdForUser}/portal-users/${user.id}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),  // generer tilfeldig
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || 'Klarte ikke nullstille passord');
+      }
+      const data = await res.json();
+      setRevealedPassword({ email: data.email, password: data.new_password });
     } catch (e) { setError(e.message); }
   };
 
@@ -687,6 +708,32 @@ function PortalAccessModal({ customer, onClose, authFetch }) {
               Hvis brukeren knyttes til hovedkunden ser de alle utsalgene sine; knyttes de til ett utsalg ser de kun det.
             </div>
 
+            {revealedPassword && (
+              <div className="border border-amber-300 bg-amber-50 rounded p-3 text-sm space-y-2">
+                <div className="font-medium text-amber-900">
+                  Passord for <span className="font-mono">{revealedPassword.email}</span>
+                </div>
+                <div className="font-mono bg-white border border-amber-200 rounded px-3 py-2 select-all text-base">
+                  {revealedPassword.password}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(revealedPassword.password)}
+                    className="text-xs text-amber-800 underline"
+                  >Kopier til utklippstavle</button>
+                  <button
+                    type="button"
+                    onClick={() => setRevealedPassword(null)}
+                    className="text-xs text-amber-800 underline ml-auto"
+                  >Lukk</button>
+                </div>
+                <div className="text-xs text-amber-800">
+                  Vises kun denne ene gangen — kopier og send til kunden via SMS / sikker kanal.
+                </div>
+              </div>
+            )}
+
             {users.length > 0 && (
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-xs uppercase text-gray-600 text-left">
@@ -694,6 +741,7 @@ function PortalAccessModal({ customer, onClose, authFetch }) {
                     <th className="px-3 py-2">E-post</th>
                     <th className="px-3 py-2">Navn</th>
                     <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -705,6 +753,15 @@ function PortalAccessModal({ customer, onClose, authFetch }) {
                         <span className={`badge ${u.is_active ? 'badge-success' : 'badge-neutral'}`}>
                           {u.is_active ? 'Aktiv' : 'Inaktiv'}
                         </span>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleResetPassword(u, u.customer_id)}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 underline"
+                        >
+                          Nullstill passord
+                        </button>
                       </td>
                     </tr>
                   ))}

@@ -520,3 +520,67 @@ async def create_portal_user(
         id=user.id, email=user.email, first_name=user.first_name,
         last_name=user.last_name, customer_id=user.customer_id, is_active=user.is_active,
     )
+
+
+class PortalPasswordReset(BaseModel):
+    new_password: Optional[str] = Field(
+        None, min_length=8, max_length=128,
+        description="Nytt passord. Hvis utelatt, genereres et tilfeldig passord."
+    )
+
+
+class PortalPasswordResetResponse(BaseModel):
+    user_id: int
+    email: str
+    new_password: str  # Returneres KUN denne ene gangen \u2014 admin maa videreformidle
+
+
+@router.post("/{customer_id}/portal-users/{user_id}/reset-password", response_model=PortalPasswordResetResponse)
+async def reset_portal_user_password(
+    customer_id: int,
+    user_id: int,
+    data: PortalPasswordReset,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Sett nytt passord for en portal-bruker. Returnerer passordet \u00e9n gang."""
+    import secrets, string
+    from ..auth_models import User as _User, UserRole as _UserRole
+    from ..auth import get_password_hash
+
+    user = db.execute(
+        select(_User).where(
+            _User.id == user_id,
+            _User.tenant_id == tenant.id,
+            _User.customer_id == customer_id,
+            _User.role == _UserRole.CUSTOMER_PORTAL,
+            _User.is_deleted == False,
+        )
+    ).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Portal-bruker ikke funnet")
+
+    if data.new_password:
+        new_password = data.new_password
+    else:
+        # Generer et lett-leselig passord (12 tegn, ingen forvekslinger)
+        alphabet = "abcdefghijkmnpqrstuvwxyz23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        new_password = "".join(secrets.choice(alphabet) for _ in range(12))
+
+    user.password_hash = get_password_hash(new_password)
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    db.commit()
+
+    db.add(AuditLog(
+        tenant_id=tenant.id,
+        entity_type="user",
+        entity_id=user.id,
+        action=AuditAction.UPDATE,
+        new_values={"password_reset_by_admin": True},
+    ))
+    db.commit()
+
+    return PortalPasswordResetResponse(
+        user_id=user.id, email=user.email, new_password=new_password,
+    )
