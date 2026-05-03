@@ -55,6 +55,7 @@ export default function Orders() {
         susoftInvoiceNo: o.susoft_invoice_no,
         invoicedAt: o.invoiced_at,
         isHidden: o.is_hidden,
+        needsReview: !!o.needs_review,
         createdAt: o.created_at
       }));
       setOrders(mappedOrders);
@@ -496,6 +497,11 @@ export default function Orders() {
                       </td>
                       <td>
                         <span className="font-mono font-medium text-gray-900">{order.orderId}</span>
+                        {order.needsReview && (
+                          <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold uppercase tracking-wide" title="Portal-ordre venter på godkjenning">
+                            Trenger godkjenning
+                          </span>
+                        )}
                       </td>
                       <td className="text-gray-700">{order.customer}</td>
                       <td className="text-gray-500 text-sm">{order.reference || <span className="text-gray-300">&mdash;</span>}</td>

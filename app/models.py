@@ -775,7 +775,17 @@ class Order(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
         comment="URL eller data-URL til bilde tatt ved levering (sjåfør-PWA)."
     )
     delivery_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    
+
+    # Portal review flag — settes TRUE for ordrer opprettet fra kunde-portalen
+    # som administrator bør se gjennom (godkjenne / korrigere) før de
+    # eventuelt sendes til produksjon/SuSoft.
+    needs_review: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, index=True,
+        comment="Ordre fra portal som venter på admin-godkjenning."
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    reviewed_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     # Order notes
     internal_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     customer_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

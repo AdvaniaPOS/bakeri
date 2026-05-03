@@ -421,6 +421,8 @@ class OrderResponse(OrderBase, TimestampSchema):
     is_locked: bool = False
     locked_at: Optional[datetime] = None
     is_hidden: bool = Field(False, validation_alias="is_deleted")
+    needs_review: bool = False
+    reviewed_at: Optional[datetime] = None
 
     route_position: Optional[int] = None
     estimated_delivery_time: Optional[datetime] = None

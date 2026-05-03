@@ -26,7 +26,7 @@ from ..dependencies import get_current_user
 from ..auth_models import User, UserRole
 from ..models import (
     Customer, Product, Order, OrderLine,
-    OrderStatus, SyncStatus, MasterTemplate,
+    OrderStatus, SyncStatus, MasterTemplate, AdminAlert,
 )
 from ..schemas import OrderResponse
 from .pricing import get_effective_price
@@ -293,6 +293,7 @@ def create_portal_order(
         status=OrderStatus.CONFIRMED,
         sync_status=SyncStatus.PENDING,
         is_adhoc_modified=True,  # opprettet manuelt fra kunde
+        needs_review=True,  # portal-ordre venter på admin-godkjenning
         total_amount_excl_vat=Decimal("0"),
         total_vat=Decimal("0"),
         total_amount_incl_vat=Decimal("0"),
@@ -337,6 +338,27 @@ def create_portal_order(
     order.total_amount_excl_vat = excl_total
     order.total_vat = vat_total
     order.total_amount_incl_vat = incl_total
+
+    # Opprett popup-varsel for administrator. Lagres i AdminAlert-tabellen
+    # med alert_type='portal_order'. Frontend poller /api/v1/notifications.
+    try:
+        alert = AdminAlert(
+            tenant_id=user.tenant_id,
+            alert_type="portal_order",
+            severity="info",
+            title=f"Ny portal-ordre fra {customer.name}",
+            message=(
+                f"Bestilling på {len(data.lines)} varelinje(r), "
+                f"totalt {incl_total:.2f} kr inkl. mva, "
+                f"levering {data.delivery_date.isoformat()}."
+            ),
+            related_entity_type="order",
+            related_entity_id=order.id,
+        )
+        db.add(alert)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Klarte ikke å opprette portal-ordre-varsel: %s", exc)
+
     db.commit()
     db.refresh(order)
 

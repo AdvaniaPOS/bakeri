@@ -697,34 +697,83 @@ async def send_order_to_susoft(
         order.last_sync_attempt = to_naive_utc(now_utc())
         order.sync_error_message = None
         db.commit()
-    except SuSoftAPIError as exc:
-        db.rollback()
-        fresh = db.get(Order, order.id)
-        if fresh:
-            fresh.sync_status = SyncStatus.FAILED
-            fresh.sync_error_message = str(exc)[:500]
-            fresh.last_sync_attempt = to_naive_utc(now_utc())
-            fresh.sync_retry_count = (fresh.sync_retry_count or 0) + 1
-            db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"SuSoft sending feilet: {exc}",
-        )
     except Exception as exc:
-        logger.exception("send_order_to_susoft failed for order %s", order_id)
+        # tenacity pakker SuSoftAPIError inn i RetryError — pakk ut igjen
+        # slik at feilmeldingen til admin blir lesbar.
+        from tenacity import RetryError
+        original = exc
+        if isinstance(exc, RetryError):
+            try:
+                original = exc.last_attempt.exception() or exc
+            except Exception:
+                original = exc
+
+        is_data_error = isinstance(original, SuSoftAPIError)
+        msg = str(original) or type(original).__name__
+
+        if not is_data_error:
+            logger.exception("send_order_to_susoft failed for order %s", order_id)
+
         db.rollback()
         fresh = db.get(Order, order.id)
         if fresh:
             fresh.sync_status = SyncStatus.FAILED
-            fresh.sync_error_message = f"Sending feilet: {str(exc)[:480]}"
+            fresh.sync_error_message = msg[:500]
             fresh.last_sync_attempt = to_naive_utc(now_utc())
             fresh.sync_retry_count = (fresh.sync_retry_count or 0) + 1
             db.commit()
+
+        # 422 for kjent data-feil (kunde/produkt mangler i SuSoft),
+        # 502 for andre nettverks-/server-feil.
+        http_status = (
+            status.HTTP_422_UNPROCESSABLE_ENTITY if is_data_error
+            else status.HTTP_502_BAD_GATEWAY
+        )
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Kunne ikke sende til SuSoft: {type(exc).__name__}: {exc}",
+            status_code=http_status,
+            detail=f"SuSoft sending feilet: {msg}",
         )
 
+    order = _load_order(db, order.id, tenant.id)
+    return _to_response(order)
+
+
+@router.post("/{order_id}/approve", response_model=OrderResponse)
+async def approve_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """
+    Godkjenn en portal-ordre — fjerner `needs_review`-flagget og markerer
+    relaterte popup-varsler som lest. Brukes fra admin-portal når en
+    administrator har sett gjennom en ordre fra kunde-portalen.
+    """
+    from ..models import AdminAlert as _Alert
+
+    order = _load_order(db, order_id, tenant.id)
+    if order.is_deleted:
+        raise HTTPException(status_code=404, detail="Ordre er slettet")
+
+    now = to_naive_utc(now_utc())
+    if order.needs_review:
+        order.needs_review = False
+        order.reviewed_at = now
+
+    # Marker relaterte portal_order-varsler som lest
+    alerts = db.execute(
+        select(_Alert).where(
+            _Alert.tenant_id == tenant.id,
+            _Alert.related_entity_type == "order",
+            _Alert.related_entity_id == order.id,
+            _Alert.is_read.is_(False),
+        )
+    ).scalars().all()
+    for a in alerts:
+        a.is_read = True
+        a.read_at = now
+
+    db.commit()
     order = _load_order(db, order.id, tenant.id)
     return _to_response(order)
 

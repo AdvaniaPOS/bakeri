@@ -13,7 +13,7 @@ from .database import init_db
 from .logging_config import setup_logging
 from .middleware import TenantContextMiddleware
 from .rate_limit import RateLimitMiddleware
-from .api import customers, products, pricing, templates, orders, admin, routes, reports, susoft_sync, auth, overrides, production, driver, portal
+from .api import customers, products, pricing, templates, orders, admin, routes, reports, susoft_sync, auth, overrides, production, driver, portal, notifications
 
 # Sentry: initieres tidlig (før app-bygging) hvis DSN er satt.
 # Sett SENTRY_DSN i .env. Tom verdi = deaktivert.
@@ -183,6 +183,7 @@ app.include_router(overrides.router, prefix="/api/v1")
 app.include_router(production.router, prefix="/api/v1")
 app.include_router(driver.router, prefix="/api/v1")
 app.include_router(portal.router, prefix="/api/v1")
+app.include_router(notifications.router, prefix="/api/v1")
 
 
 @app.get("/")
