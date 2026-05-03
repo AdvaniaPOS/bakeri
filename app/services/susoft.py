@@ -67,6 +67,82 @@ def _format_allergens(raw) -> Optional[str]:
     result = ", ".join(unique)
     return result[:500]
 
+
+def parse_susoft_datetime(value) -> Optional[datetime]:
+    """
+    Parse en SuSoft datetime-verdi. SuSoft sender et zoo av formater:
+
+    - int 8-sifret    `20260502`              -> yyyyMMdd
+    - int 12-sifret   `202605040012`          -> yyyyMMddHHmm
+    - int 14-sifret   `20260503223018`        -> yyyyMMddHHmmss
+    - str             `"2026/05/08 00:12:00.000000"`  (mikrosekunder)
+    - str             `"2026/05/08 00:12:00"`
+    - str ISO         `"2026-05-08T00:12:00"`
+    - str dato        `"2026-05-08"`
+
+    Returnerer naive `datetime` (uten tz). None hvis verdien er falsy/ugyldig.
+    """
+    if value is None or value == "" or value == 0:
+        return None
+
+    # Numerisk
+    if isinstance(value, (int, float)):
+        s = str(int(value))
+    else:
+        s = str(value).strip()
+        if not s:
+            return None
+
+    # Numerisk-streng (kun siffer) -> samme parsing som int
+    if s.isdigit():
+        try:
+            if len(s) == 14:
+                return datetime.strptime(s, "%Y%m%d%H%M%S")
+            if len(s) == 12:
+                return datetime.strptime(s, "%Y%m%d%H%M")
+            if len(s) == 8:
+                return datetime.strptime(s, "%Y%m%d")
+        except ValueError:
+            return None
+        return None
+
+    # String-formater
+    fmts = (
+        "%Y/%m/%d %H:%M:%S.%f",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    )
+    # Strip evt. timezone-suffiks
+    cleaned = s.replace("Z", "")
+    for fmt in fmts:
+        try:
+            return datetime.strptime(cleaned, fmt)
+        except ValueError:
+            continue
+    logger.debug("Klarte ikke parse SuSoft datetime: %r", value)
+    return None
+
+
+def pick_susoft_fulfillment(row: Dict[str, Any]) -> Tuple[Optional[datetime], str]:
+    """
+    Velg fulfillment for en SuSoft-ordrerad.
+
+    Returnerer (dt, kind) hvor kind er "pickup", "delivery" eller "unknown".
+    Foretrekker pickup hvis begge skulle finnes.
+    """
+    pickup = parse_susoft_datetime(row.get("pickupDate"))
+    if pickup is not None:
+        return pickup, "pickup"
+    delivery = parse_susoft_datetime(row.get("deliveryDate"))
+    if delivery is not None:
+        return delivery, "delivery"
+    return None, "unknown"
+
+
 # Configuration - SuSoft API base URL (port 4443 per spec)
 SUSOFT_BASE_URL_DEFAULT = os.getenv("SUSOFT_BASE_URL", "https://api.susoft.com:4443")
 SUSOFT_USERNAME_ENV = os.getenv("SUSOFT_USERNAME", "")
@@ -582,6 +658,77 @@ class SuSoftService:
         )
         self.db.add(alert)
         self.db.commit()
+    
+    # =========================================================================
+    # SUSOFT ORDER POLLING (innkommende ordrer FRA SuSoft)
+    # =========================================================================
+
+    def list_orders(
+        self,
+        date_from: date,
+        date_to: date,
+        shop_id: Optional[str] = None,
+        mode: str = "FULL",
+    ) -> List[Dict[str, Any]]:
+        """
+        Hent ordrer fra SuSoft via `GET /order/list`.
+
+        SuSoft filtrerer på `orderDate` (ikke pickup/delivery), så kall denne
+        med et bredt vindu og filtrer pickup/delivery klient-side om nødvendig.
+
+        Returnerer en flat liste med ordre-rader (rows[]). Per-shop wrappers
+        slås sammen, og hver rad annoteres med `_shopId` / `_shopName` for
+        sporbarhet.
+        """
+        self._ensure_tenant_available()
+
+        params: Dict[str, Any] = {
+            "fromDate": date_from.strftime("%Y-%m-%d"),
+            "toDate": date_to.strftime("%Y-%m-%d"),
+            "mode": mode,
+        }
+        if shop_id:
+            params["shopId"] = shop_id
+
+        query = urlencode(params)
+        path = f"/order/list?{query}"
+
+        response = self._request_with_throttle_retry(
+            "GET", path, headers=self._get_headers()
+        )
+        if not response.is_success:
+            raise SuSoftAPIError(
+                f"Failed to list orders: HTTP {response.status_code}",
+                response.status_code,
+                response.text,
+            )
+
+        body = response.json() or []
+        if not isinstance(body, list):
+            raise SuSoftAPIError(
+                f"Unexpected /order/list response type: {type(body).__name__}"
+            )
+
+        flat: List[Dict[str, Any]] = []
+        for shop_block in body:
+            if not isinstance(shop_block, dict):
+                continue
+            sid = shop_block.get("shopId")
+            sname = shop_block.get("shopName")
+            rows = shop_block.get("rows") or []
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                row.setdefault("_shopId", sid)
+                row.setdefault("_shopName", sname)
+                flat.append(row)
+        logger.info(
+            "SuSoft /order/list %s..%s shop=%s -> %d rader",
+            date_from, date_to, shop_id or "*", len(flat),
+        )
+        return flat
     
     # =========================================================================
     # ORDER OPERATIONS

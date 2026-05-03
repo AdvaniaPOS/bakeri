@@ -67,6 +67,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_from_susoft",
         "schedule": crontab(hour=1, minute=0),
     },
+    # POLL: hent NYE ordrer FRA SuSoft hver 5. minutt (motsatt vei av push).
+    "ingest-orders-from-susoft": {
+        "task": "app.tasks.ingest_susoft_orders",
+        "schedule": crontab(minute="*/5"),
+    },
     # Process scheduled price changes at 00:05
     "process-price-changes": {
         "task": "app.tasks.process_scheduled_price_changes",
@@ -430,6 +435,19 @@ def full_sync_from_susoft():
         }
     finally:
         db.close()
+
+
+@celery_app.task(name="app.tasks.ingest_susoft_orders")
+def ingest_susoft_orders(days_back: int = 30):
+    """
+    Pull NYE ordrer FRA SuSoft for alle tenants (polling).
+
+    Kjøres hvert 5. minutt. Dedupliserer mot `orders.susoft_uuid`.
+    Ordrer uten lokal kunde-match opprettes mot 'Ukjent kunde'.
+    `type=CART` opprettes som DRAFT.
+    """
+    from .services.susoft_ingest import ingest_susoft_orders_all_tenants
+    return ingest_susoft_orders_all_tenants(days_back=days_back)
 
 
 # =============================================================================

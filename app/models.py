@@ -734,6 +734,43 @@ class Order(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
         comment="Tidspunkt da ordren ble fakturert i SuSoft."
     )
 
+    # =====================================================================
+    # SuSoft INGESTION (orders polled FROM SuSoft, opposite of /order POST)
+    # Brukt av sync_orders_from_susoft hver 5. minutt.
+    # =====================================================================
+    susoft_uuid: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True,
+        comment="SuSoft `uuid` for ordren — dedup-nøkkel ved polling."
+    )
+    susoft_order_no: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True, index=True,
+        comment="SuSoft `orderNo` slik den vises i SuSoft-UIet."
+    )
+    susoft_shop_id: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, index=True,
+        comment="Shop-ID i SuSoft (kasse/utsalg) som ordren ble registrert på."
+    )
+    susoft_pickup_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+        comment="Avtalt henting i SuSoft (`pickupDate`). Null hvis ikke pickup."
+    )
+    susoft_delivery_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+        comment="Avtalt levering i SuSoft (`deliveryDate`). Null hvis ikke delivery."
+    )
+    susoft_fulfillment_type: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True,
+        comment="`pickup` | `delivery` | `unknown` — utledet fra SuSoft-payload."
+    )
+    susoft_raw_payload: Mapped[Optional[dict]] = mapped_column(
+        JSON, nullable=True,
+        comment="Rå SuSoft-rad fra siste polling — for debugging/audit."
+    )
+    source: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True, index=True,
+        comment="Hvor ordren kom fra: `template`, `portal`, `manual`, `susoft_import`."
+    )
+
     # Order source
     generated_from_template_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("master_templates.id", ondelete="SET NULL"), nullable=True
@@ -807,6 +844,8 @@ class Order(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     __table_args__ = (
         # SuSoft order ID unique within tenant
         UniqueConstraint("tenant_id", "susoft_order_id", name="uq_order_tenant_susoft"),
+        # SuSoft uuid (fra polling) unik innen tenant — dedup-nøkkel
+        UniqueConstraint("tenant_id", "susoft_uuid", name="uq_order_tenant_susoft_uuid"),
         # Per-tenant lopenr unik (manuelt validert i kode siden NULL er tillatt for legacy)
         UniqueConstraint("tenant_id", "order_no_seq", name="uq_order_tenant_seq"),
         Index("ix_orders_tenant_delivery_status", "tenant_id", "delivery_date", "status"),

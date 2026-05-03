@@ -1,0 +1,368 @@
+"""
+SuSoft -> Lampeland-bakeri ordre-INGESTION (polling).
+
+Henter ordre fra SuSoft `GET /order/list` hver 5. minutt og dedupliserer
+mot `orders.susoft_uuid`. Ordrer som ikke finnes lokalt opprettes; ordrer
+som allerede finnes (samme uuid + samme tenant) hoppes over.
+
+Designvalg (bekreftet med bruker):
+- Manglende `customer` -> bruk/opprett tenant-spesifikk "Ukjent kunde"
+- `type == "CART"` -> opprett som DRAFT-status
+- Alle shopId-er ingestes (ingen filter)
+- Kjøres hvert 5. minutt
+
+NB: SuSoft `/order/list` filtrerer på `orderDate`, ikke pickup/delivery,
+så vi pull-er et bredt vindu (siste 30 dager). Klient-side beholder vi
+alle rader uavhengig av pickup/delivery-tid.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..database import SessionLocal
+from ..models import (
+    Customer,
+    Order,
+    OrderLine,
+    OrderStatus,
+    Product,
+    SyncStatus,
+)
+from .susoft import (
+    SuSoftAPIError,
+    SuSoftService,
+    parse_susoft_datetime,
+    pick_susoft_fulfillment,
+)
+
+logger = logging.getLogger(__name__)
+
+UKJENT_KUNDE_SUSOFT_ID = "__ukjent__"
+DEFAULT_POLL_DAYS_BACK = 30
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _get_or_create_unknown_customer(db: Session, tenant_id: int) -> Customer:
+    """Henter (eller oppretter) tenant-spesifikk 'Ukjent kunde'."""
+    customer = db.execute(
+        select(Customer).where(
+            Customer.tenant_id == tenant_id,
+            Customer.susoft_customer_id == UKJENT_KUNDE_SUSOFT_ID,
+        )
+    ).scalar_one_or_none()
+    if customer:
+        return customer
+
+    customer = Customer(
+        tenant_id=tenant_id,
+        susoft_customer_id=UKJENT_KUNDE_SUSOFT_ID,
+        name="Ukjent kunde (SuSoft)",
+        company_name=None,
+        country="Norway",
+        is_active=True,
+        order_lead_days=14,
+    )
+    db.add(customer)
+    db.flush()
+    logger.info("Opprettet 'Ukjent kunde' for tenant %s (id=%s)", tenant_id, customer.id)
+    return customer
+
+
+def _find_or_create_customer_from_payload(
+    db: Session, tenant_id: int, cust_payload: Dict[str, Any]
+) -> Customer:
+    """
+    Match SuSoft-customer mot lokal kunde via `susoft_customer_id`.
+    Hvis ingen match → opprett en minimal kunde slik at ordren kan lagres.
+    """
+    susoft_id = cust_payload.get("id")
+    if susoft_id is None or susoft_id == "":
+        return _get_or_create_unknown_customer(db, tenant_id)
+
+    susoft_id_str = str(susoft_id)
+    customer = db.execute(
+        select(Customer).where(
+            Customer.tenant_id == tenant_id,
+            Customer.susoft_customer_id == susoft_id_str,
+        )
+    ).scalar_one_or_none()
+    if customer:
+        return customer
+
+    # Bygg minimal kunde fra payload (full sync vil oppdatere senere).
+    first = (cust_payload.get("firstName") or "").strip()
+    last = (cust_payload.get("lastName") or "").strip()
+    display = (cust_payload.get("displayName") or "").strip()
+    name = display or (f"{first} {last}".strip()) or f"Kunde {susoft_id_str}"
+
+    customer = Customer(
+        tenant_id=tenant_id,
+        susoft_customer_id=susoft_id_str,
+        name=name[:255],
+        company_name=display[:255] if cust_payload.get("isCompany") and display else None,
+        contact_person=first[:255] if first else None,
+        email=(cust_payload.get("email") or None),
+        phone=(cust_payload.get("phone") or None),
+        country="Norway",
+        is_active=True,
+        order_lead_days=14,
+    )
+    db.add(customer)
+    db.flush()
+    logger.info(
+        "Opprettet ny kunde fra SuSoft-ordre (tenant=%s, susoft_id=%s, name=%r)",
+        tenant_id, susoft_id_str, customer.name,
+    )
+    return customer
+
+
+def _resolve_product(
+    db: Session, tenant_id: int, line: Dict[str, Any]
+) -> Optional[Product]:
+    """Slå opp lokalt produkt via SuSoft productId. None hvis ikke funnet."""
+    prod_block = line.get("product") or {}
+    pid = prod_block.get("id") or line.get("productId")
+    if pid is None or pid == "":
+        return None
+    return db.execute(
+        select(Product).where(
+            Product.tenant_id == tenant_id,
+            Product.susoft_product_id == str(pid),
+        )
+    ).scalar_one_or_none()
+
+
+def _to_decimal(value: Any, default: str = "0") -> Decimal:
+    if value is None or value == "":
+        return Decimal(default)
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return Decimal(default)
+
+
+def _map_status(row: Dict[str, Any]) -> OrderStatus:
+    """Map SuSoft `type` + `statusName` til vår OrderStatus."""
+    if (row.get("type") or "").upper() == "CART":
+        return OrderStatus.DRAFT
+    status = (row.get("statusName") or "").strip().lower()
+    if status in ("confirmed", "bekreftet", "klar for leveranse", "ready"):
+        return OrderStatus.CONFIRMED
+    if status in ("delivered", "levert"):
+        return OrderStatus.DELIVERED
+    if status in ("cancelled", "canceled", "avbrutt", "kansellert"):
+        return OrderStatus.CANCELLED
+    if status in ("in_transit", "i transport", "på vei"):
+        return OrderStatus.IN_TRANSIT
+    # Default: behold som confirmed for ORDER, draft for alt annet
+    if (row.get("type") or "").upper() == "ORDER":
+        return OrderStatus.CONFIRMED
+    return OrderStatus.DRAFT
+
+
+# ---------------------------------------------------------------------------
+# Hovedfunksjon
+# ---------------------------------------------------------------------------
+
+def ingest_susoft_orders_for_tenant(
+    db: Session,
+    tenant_id: int,
+    days_back: int = DEFAULT_POLL_DAYS_BACK,
+    shop_id: Optional[str] = None,
+) -> Dict[str, int]:
+    """
+    Pull ordrer fra SuSoft og opprett lokalt for de som mangler.
+
+    Returnerer summary: {fetched, created, skipped_existing, errors}.
+    """
+    today = date.today()
+    date_from = today - timedelta(days=days_back)
+    date_to = today + timedelta(days=days_back)  # inkluder fremtidige bestillinger
+
+    service = SuSoftService(db, tenant_id=tenant_id)
+
+    try:
+        rows = service.list_orders(
+            date_from=date_from,
+            date_to=date_to,
+            shop_id=shop_id,
+            mode="FULL",
+        )
+    except SuSoftAPIError as e:
+        logger.error("SuSoft list_orders feilet (tenant=%s): %s", tenant_id, e)
+        return {"fetched": 0, "created": 0, "skipped_existing": 0, "errors": 1}
+
+    summary = {
+        "fetched": len(rows),
+        "created": 0,
+        "skipped_existing": 0,
+        "errors": 0,
+    }
+
+    for row in rows:
+        try:
+            uuid_val = row.get("uuid")
+            if not uuid_val:
+                # Uten uuid kan vi ikke dedupere — hopp over.
+                logger.debug("Hopper over SuSoft-rad uten uuid (orderNo=%s)", row.get("orderNo"))
+                continue
+            uuid_str = str(uuid_val)
+
+            existing = db.execute(
+                select(Order.id).where(
+                    Order.tenant_id == tenant_id,
+                    Order.susoft_uuid == uuid_str,
+                )
+            ).scalar_one_or_none()
+            if existing:
+                summary["skipped_existing"] += 1
+                continue
+
+            # Finn / opprett kunde
+            cust_payload = row.get("customer") or {}
+            if not isinstance(cust_payload, dict) or not cust_payload:
+                customer = _get_or_create_unknown_customer(db, tenant_id)
+            else:
+                customer = _find_or_create_customer_from_payload(db, tenant_id, cust_payload)
+
+            # Velg fulfillment-tid
+            fulfill_dt, fulfill_kind = pick_susoft_fulfillment(row)
+            order_dt = parse_susoft_datetime(row.get("orderDate"))
+            pickup_dt = parse_susoft_datetime(row.get("pickupDate"))
+            delivery_dt = parse_susoft_datetime(row.get("deliveryDate"))
+
+            # delivery_date er NOT NULL i vår modell — fall tilbake til orderDate eller i dag
+            chosen_dt = fulfill_dt or order_dt
+            local_delivery_date: date = chosen_dt.date() if chosen_dt else today
+
+            status = _map_status(row)
+
+            order = Order(
+                tenant_id=tenant_id,
+                customer_id=customer.id,
+                delivery_date=local_delivery_date,
+                status=status,
+                sync_status=SyncStatus.SYNCED,  # Allerede i SuSoft per def
+                susoft_uuid=uuid_str,
+                susoft_order_no=str(row.get("orderNo") or "")[:100] or None,
+                susoft_shop_id=str(row.get("_shopId") or "")[:50] or None,
+                susoft_pickup_at=pickup_dt,
+                susoft_delivery_at=delivery_dt,
+                susoft_fulfillment_type=fulfill_kind,
+                susoft_raw_payload=row,
+                source="susoft_import",
+                customer_notes=(row.get("note") or row.get("comment") or None),
+            )
+            db.add(order)
+            db.flush()  # få order.id
+
+            # Linjer
+            total_excl = Decimal("0.00")
+            total_vat = Decimal("0.00")
+            total_incl = Decimal("0.00")
+
+            for line in (row.get("lines") or []):
+                if not isinstance(line, dict):
+                    continue
+                product = _resolve_product(db, tenant_id, line)
+                if product is None:
+                    # Hopp over linjer der vi ikke kjenner produktet —
+                    # ordren lagres uten dem (raw_payload har full info).
+                    logger.warning(
+                        "Ukjent produkt i SuSoft-ordre uuid=%s, productId=%s",
+                        uuid_str, (line.get("product") or {}).get("id"),
+                    )
+                    continue
+
+                qty = int(_to_decimal(line.get("quantity"), "0"))
+                if qty <= 0:
+                    continue
+                unit_price = _to_decimal(
+                    line.get("netPrice") or line.get("unitPrice") or line.get("price"),
+                    "0",
+                )
+                vat_rate = _to_decimal(line.get("vatPercent") or product.vat_rate, "0")
+                line_excl = (Decimal(qty) * unit_price).quantize(Decimal("0.01"))
+                line_vat = (line_excl * vat_rate / Decimal("100")).quantize(Decimal("0.01"))
+                line_incl = (line_excl + line_vat).quantize(Decimal("0.01"))
+
+                ol = OrderLine(
+                    tenant_id=tenant_id,
+                    order_id=order.id,
+                    product_id=product.id,
+                    quantity=qty,
+                    unit_price=unit_price,
+                    vat_rate=vat_rate,
+                    line_amount_excl_vat=line_excl,
+                    line_vat=line_vat,
+                    line_amount_incl_vat=line_incl,
+                )
+                db.add(ol)
+                total_excl += line_excl
+                total_vat += line_vat
+                total_incl += line_incl
+
+            order.total_amount_excl_vat = total_excl
+            order.total_vat = total_vat
+            order.total_amount_incl_vat = total_incl
+
+            db.commit()
+            summary["created"] += 1
+
+        except Exception as e:
+            db.rollback()
+            summary["errors"] += 1
+            logger.exception(
+                "Feil ved ingest av SuSoft-ordre uuid=%s: %s",
+                row.get("uuid"), e,
+            )
+
+    logger.info(
+        "SuSoft ingest tenant=%s: fetched=%d created=%d skipped=%d errors=%d",
+        tenant_id, summary["fetched"], summary["created"],
+        summary["skipped_existing"], summary["errors"],
+    )
+    return summary
+
+
+def ingest_susoft_orders_all_tenants(days_back: int = DEFAULT_POLL_DAYS_BACK) -> Dict[str, Any]:
+    """
+    Kjør ingest for alle tenants som har SuSoft-credentials konfigurert.
+    """
+    from ..auth_models import Tenant
+
+    db = SessionLocal()
+    results: Dict[str, Any] = {"tenants": []}
+    try:
+        tenants = db.execute(
+            select(Tenant).where(Tenant.susoft_login.isnot(None))
+        ).scalars().all()
+        for tenant in tenants:
+            try:
+                summary = ingest_susoft_orders_for_tenant(
+                    db, tenant_id=tenant.id, days_back=days_back
+                )
+                results["tenants"].append({
+                    "tenant_id": tenant.id,
+                    "tenant_name": tenant.name,
+                    **summary,
+                })
+            except Exception as e:
+                logger.exception("Ingest feilet for tenant %s: %s", tenant.id, e)
+                results["tenants"].append({
+                    "tenant_id": tenant.id,
+                    "tenant_name": tenant.name,
+                    "error": str(e),
+                })
+    finally:
+        db.close()
+    return results

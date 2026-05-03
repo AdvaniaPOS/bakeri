@@ -17,6 +17,9 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Order, SyncLog, SyncStatus, OrderStatus
 from ..services.susoft import SuSoftService, SuSoftAPIError
+from ..services.susoft_ingest import ingest_susoft_orders_for_tenant
+from ..dependencies import get_current_tenant
+from ..auth_models import Tenant
 from ..features import feature_required
 
 router = APIRouter(
@@ -161,6 +164,37 @@ async def get_sync_logs(
 # =============================================================================
 # CUSTOMER/PRODUCT SYNC FROM SUSOFT
 # =============================================================================
+
+
+@router.post("/orders/ingest")
+async def ingest_orders_from_susoft(
+    days_back: int = Query(30, ge=1, le=365, description="Hvor mange dager bakover (orderDate) som skal pulles."),
+    shop_id: Optional[str] = Query(None, description="Begrens til én shopId. Default: alle."),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: Session = Depends(get_db),
+):
+    """
+    Manuell trigger: hent NYE ordrer FRA SuSoft for innlogget tenant.
+
+    Normalt kjøres dette automatisk hvert 5. minutt via Celery beat
+    (`app.tasks.ingest_susoft_orders`). Bruk dette for testing eller
+    on-demand henting.
+    """
+    try:
+        result = ingest_susoft_orders_for_tenant(
+            db, tenant_id=tenant.id, days_back=days_back, shop_id=shop_id,
+        )
+        return {
+            "status": "success",
+            "tenant_id": tenant.id,
+            **result,
+            "ingested_at": datetime.utcnow(),
+        }
+    except SuSoftAPIError as e:
+        raise HTTPException(status_code=502, detail=f"SuSoft API error: {e.message}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ingest failed: {str(e)}")
+
 
 @router.post("/customers")
 async def sync_customers_from_susoft(
