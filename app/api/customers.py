@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select, func, update
 from sqlalchemy.orm import Session, selectinload
 
@@ -333,3 +333,190 @@ async def get_customer_plan_status(
         "last_generated_date": last_date.isoformat() if last_date else None,
         "delivers_on_holidays": customer.delivers_on_holidays,
     }
+
+
+# =============================================================================
+# Multi-utsalg + portal-bruker
+# =============================================================================
+
+class OutletSummary(BaseModel):
+    id: int
+    name: str
+    company_name: Optional[str] = None
+    street_address: Optional[str] = None
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
+    is_active: bool
+    has_portal_user: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/{customer_id}/outlets", response_model=List[OutletSummary])
+async def list_outlets(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Liste over utsalg under en hovedkunde."""
+    from ..auth_models import User as _User
+    parent = get_or_404(db, Customer, customer_id, tenant.id, "Customer not found")
+    outlets = db.execute(
+        select(Customer).where(
+            Customer.tenant_id == tenant.id,
+            Customer.parent_customer_id == parent.id,
+            Customer.is_deleted == False,
+        ).order_by(Customer.name)
+    ).scalars().all()
+    # Sjekk hvilke utsalg som har egen portal-bruker
+    user_ids = set(db.execute(
+        select(_User.customer_id).where(
+            _User.tenant_id == tenant.id,
+            _User.customer_id.in_([o.id for o in outlets] or [0]),
+            _User.is_deleted == False,
+        )
+    ).scalars().all())
+    return [
+        OutletSummary(
+            id=o.id, name=o.name, company_name=o.company_name,
+            street_address=o.street_address, postal_code=o.postal_code,
+            city=o.city, is_active=o.is_active,
+            has_portal_user=o.id in user_ids,
+        )
+        for o in outlets
+    ]
+
+
+class OutletCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    company_name: Optional[str] = Field(None, max_length=255)
+    street_address: Optional[str] = Field(None, max_length=500)
+    postal_code: Optional[str] = Field(None, max_length=20)
+    city: Optional[str] = Field(None, max_length=100)
+    contact_person: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=50)
+    delivery_instructions: Optional[str] = Field(None, max_length=2000)
+
+
+@router.post("/{customer_id}/outlets", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
+async def create_outlet(
+    customer_id: int,
+    data: OutletCreate,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Opprett et utsalg under en hovedkunde."""
+    parent = get_or_404(db, Customer, customer_id, tenant.id, "Customer not found")
+    if parent.parent_customer_id is not None:
+        raise HTTPException(status_code=400, detail="Utsalg kan ikke ha egne under-utsalg")
+    outlet = Customer(
+        tenant_id=tenant.id,
+        parent_customer_id=parent.id,
+        order_lead_days=parent.order_lead_days,
+        delivers_on_holidays=parent.delivers_on_holidays,
+        country=parent.country,
+        **data.model_dump(),
+    )
+    db.add(outlet)
+    db.commit()
+    db.refresh(outlet)
+    db.add(AuditLog(
+        tenant_id=tenant.id,
+        entity_type="customer",
+        entity_id=outlet.id,
+        action=AuditAction.CREATE,
+        new_values={"created_as_outlet_of": parent.id, **data.model_dump(mode="json")},
+    ))
+    db.commit()
+    return CustomerResponse.model_validate(outlet)
+
+
+class PortalUserInvite(BaseModel):
+    email: EmailStr
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    phone: Optional[str] = Field(None, max_length=50)
+    initial_password: str = Field(..., min_length=8, max_length=128)
+
+
+class PortalUserResponse(BaseModel):
+    id: int
+    email: str
+    first_name: str
+    last_name: str
+    customer_id: int
+    is_active: bool
+
+
+@router.get("/{customer_id}/portal-users", response_model=List[PortalUserResponse])
+async def list_portal_users(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    from ..auth_models import User as _User, UserRole as _UserRole
+    customer = get_or_404(db, Customer, customer_id, tenant.id, "Customer not found")
+    users = db.execute(
+        select(_User).where(
+            _User.tenant_id == tenant.id,
+            _User.customer_id == customer.id,
+            _User.role == _UserRole.CUSTOMER_PORTAL,
+            _User.is_deleted == False,
+        ).order_by(_User.email)
+    ).scalars().all()
+    return [
+        PortalUserResponse(
+            id=u.id, email=u.email, first_name=u.first_name,
+            last_name=u.last_name, customer_id=u.customer_id, is_active=u.is_active,
+        ) for u in users
+    ]
+
+
+@router.post("/{customer_id}/portal-users", response_model=PortalUserResponse, status_code=status.HTTP_201_CREATED)
+async def create_portal_user(
+    customer_id: int,
+    data: PortalUserInvite,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Opprett en kundeportal-bruker som er knyttet til denne kunden (eller utsalget)."""
+    from ..auth_models import User as _User, UserRole as _UserRole
+    from ..auth import get_password_hash
+
+    customer = get_or_404(db, Customer, customer_id, tenant.id, "Customer not found")
+
+    existing = db.execute(
+        select(_User).where(_User.email == data.email)
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="En bruker med denne e-posten finnes allerede")
+
+    user = _User(
+        tenant_id=tenant.id,
+        email=data.email.lower(),
+        password_hash=get_password_hash(data.initial_password),
+        first_name=data.first_name,
+        last_name=data.last_name,
+        phone=data.phone,
+        role=_UserRole.CUSTOMER_PORTAL,
+        customer_id=customer.id,
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    db.add(AuditLog(
+        tenant_id=tenant.id,
+        entity_type="user",
+        entity_id=user.id,
+        action=AuditAction.CREATE,
+        new_values={"role": "customer_portal", "customer_id": customer.id, "email": user.email},
+    ))
+    db.commit()
+
+    return PortalUserResponse(
+        id=user.id, email=user.email, first_name=user.first_name,
+        last_name=user.last_name, customer_id=user.customer_id, is_active=user.is_active,
+    )

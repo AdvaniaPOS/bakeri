@@ -335,9 +335,26 @@ class Customer(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
         nullable=True, index=True,
         comment="Assigned delivery route"
     )
-    
+
+    # Multi-utsalg / kjedekunder: en kunde kan være et utsalg under en hovedkunde.
+    # Hovedkundens portal-bruker ser ordrer for ALLE utsalg under seg.
+    # Et utsalg som har egen portal-bruker ser KUN sine egne ordrer.
+    parent_customer_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+        comment="Hvis satt: denne kunden er et utsalg under hovedkunden med denne IDen."
+    )
+
     # Relationships
     route: Mapped[Optional["Route"]] = relationship(back_populates="customers")
+    parent_customer: Mapped[Optional["Customer"]] = relationship(
+        "Customer", remote_side="Customer.id", back_populates="sub_outlets",
+        foreign_keys=[parent_customer_id]
+    )
+    sub_outlets: Mapped[List["Customer"]] = relationship(
+        "Customer", back_populates="parent_customer",
+        foreign_keys=[parent_customer_id]
+    )
     custom_prices: Mapped[List["CustomerProductPrice"]] = relationship(
         back_populates="customer", cascade="all, delete-orphan"
     )

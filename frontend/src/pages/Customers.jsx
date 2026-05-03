@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Search, Plus, Building2, Phone, Mail, MapPin, RefreshCw, Edit2, X, Check, ClipboardList, AlertTriangle, CalendarClock, PlayCircle, PauseCircle, Eye, EyeOff } from 'lucide-react';
+import { Search, Plus, Building2, Phone, Mail, MapPin, RefreshCw, Edit2, X, Check, ClipboardList, AlertTriangle, CalendarClock, PlayCircle, PauseCircle, Eye, EyeOff, Store, UserPlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import QuickOverrideModal from '../components/QuickOverrideModal';
@@ -18,6 +18,7 @@ export default function Customers() {
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [overrideCustomer, setOverrideCustomer] = useState(null);
   const [planCustomer, setPlanCustomer] = useState(null);
+  const [portalCustomer, setPortalCustomer] = useState(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -333,6 +334,13 @@ export default function Customers() {
                           <AlertTriangle className="w-3 h-3" /> Avvik
                         </button>
                         <button
+                          onClick={() => setPortalCustomer(customer)}
+                          className="badge bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                          title="Utsalg & portal-tilgang"
+                        >
+                          <Store className="w-3 h-3" /> Portal
+                        </button>
+                        <button
                           onClick={() => setEditingCustomer(customer)}
                           className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded"
                           title="Rediger"
@@ -387,6 +395,14 @@ export default function Customers() {
           customer={planCustomer}
           onClose={() => setPlanCustomer(null)}
           onChanged={fetchCustomers}
+        />
+      )}
+
+      {portalCustomer && (
+        <PortalAccessModal
+          customer={portalCustomer}
+          onClose={() => setPortalCustomer(null)}
+          authFetch={authFetch}
         />
       )}
     </div>
@@ -462,6 +478,296 @@ function CustomerModal({ customer, onClose, onSave }) {
             <button type="submit" className="btn-primary flex items-center gap-2"><Check className="w-4 h-4" />Lagre</button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function PortalAccessModal({ customer, onClose, authFetch }) {
+  const [outlets, setOutlets] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [tab, setTab] = useState('outlets');
+
+  // outlet form
+  const [newOutlet, setNewOutlet] = useState({ name: '', street_address: '', postal_code: '', city: '', contact_person: '', phone: '' });
+  // user form
+  const [newUser, setNewUser] = useState({ email: '', first_name: '', last_name: '', phone: '', initial_password: '' });
+  const [targetCustomerId, setTargetCustomerId] = useState(customer.id);
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [oRes, uRes] = await Promise.all([
+        authFetch(`/api/v1/customers/${customer.id}/outlets`),
+        authFetch(`/api/v1/customers/${customer.id}/portal-users`),
+      ]);
+      const oData = oRes.ok ? await oRes.json() : [];
+      const uData = uRes.ok ? await uRes.json() : [];
+      setOutlets(oData);
+      setUsers(uData);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [customer.id]);
+
+  const handleAddOutlet = async (e) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      const res = await authFetch(`/api/v1/customers/${customer.id}/outlets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newOutlet),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || 'Klarte ikke opprette utsalg');
+      }
+      setNewOutlet({ name: '', street_address: '', postal_code: '', city: '', contact_person: '', phone: '' });
+      reload();
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleAddUser = async (e) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      const res = await authFetch(`/api/v1/customers/${targetCustomerId}/portal-users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUser),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || 'Klarte ikke opprette portal-bruker');
+      }
+      setNewUser({ email: '', first_name: '', last_name: '', phone: '', initial_password: '' });
+      reload();
+    } catch (e) { setError(e.message); }
+  };
+
+  const allCustomers = [{ id: customer.id, name: `${customer.name} (hovedkunde)` }, ...outlets.map(o => ({ id: o.id, name: o.name }))];
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Store className="w-5 h-5 text-emerald-600" />
+            Utsalg & portal-tilgang — {customer.name}
+          </h2>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-700">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="border-b flex">
+          <button
+            className={`px-4 py-2 text-sm font-medium ${tab === 'outlets' ? 'border-b-2 border-emerald-600 text-emerald-700' : 'text-gray-600'}`}
+            onClick={() => setTab('outlets')}
+          >Utsalg ({outlets.length})</button>
+          <button
+            className={`px-4 py-2 text-sm font-medium ${tab === 'users' ? 'border-b-2 border-emerald-600 text-emerald-700' : 'text-gray-600'}`}
+            onClick={() => setTab('users')}
+          >Portal-brukere ({users.length})</button>
+        </div>
+
+        {error && (
+          <div className="m-4 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-sm">{error}</div>
+        )}
+
+        {loading ? (
+          <div className="p-6 text-gray-600">Laster…</div>
+        ) : tab === 'outlets' ? (
+          <div className="p-4 space-y-4">
+            <div className="text-sm text-gray-600">
+              Utsalg er undergrupper av denne kunden. Ordrer kan registreres pr. utsalg, og hovedkundens portal-bruker ser alle utsalgene sine.
+            </div>
+
+            {outlets.length > 0 && (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-600 text-left">
+                  <tr>
+                    <th className="px-3 py-2">Navn</th>
+                    <th className="px-3 py-2">Adresse</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Portal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {outlets.map(o => (
+                    <tr key={o.id} className="border-t">
+                      <td className="px-3 py-2 font-medium">{o.name}</td>
+                      <td className="px-3 py-2 text-gray-700">
+                        {o.street_address || '—'}{o.city ? `, ${o.postal_code || ''} ${o.city}` : ''}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`badge ${o.is_active ? 'badge-success' : 'badge-neutral'}`}>
+                          {o.is_active ? 'Aktiv' : 'Skjult'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        {o.has_portal_user ? (
+                          <span className="text-xs text-emerald-700">✓ Egen bruker</span>
+                        ) : (
+                          <span className="text-xs text-gray-500">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <form onSubmit={handleAddOutlet} className="border-t pt-4 space-y-3">
+              <div className="font-medium text-sm">Nytt utsalg</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  required
+                  type="text"
+                  placeholder="Navn på utsalg *"
+                  value={newOutlet.name}
+                  onChange={e => setNewOutlet(s => ({ ...s, name: e.target.value }))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <input
+                  type="text"
+                  placeholder="Kontaktperson"
+                  value={newOutlet.contact_person}
+                  onChange={e => setNewOutlet(s => ({ ...s, contact_person: e.target.value }))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <input
+                  type="text"
+                  placeholder="Adresse"
+                  value={newOutlet.street_address}
+                  onChange={e => setNewOutlet(s => ({ ...s, street_address: e.target.value }))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Postnr"
+                    value={newOutlet.postal_code}
+                    onChange={e => setNewOutlet(s => ({ ...s, postal_code: e.target.value }))}
+                    className="border border-gray-300 rounded px-3 py-2 text-sm w-24"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Sted"
+                    value={newOutlet.city}
+                    onChange={e => setNewOutlet(s => ({ ...s, city: e.target.value }))}
+                    className="border border-gray-300 rounded px-3 py-2 text-sm flex-1"
+                  />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Telefon"
+                  value={newOutlet.phone}
+                  onChange={e => setNewOutlet(s => ({ ...s, phone: e.target.value }))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+              </div>
+              <button type="submit" className="btn-primary inline-flex items-center gap-2">
+                <Plus className="w-4 h-4" /> Opprett utsalg
+              </button>
+            </form>
+          </div>
+        ) : (
+          <div className="p-4 space-y-4">
+            <div className="text-sm text-gray-600">
+              Portal-brukere kan logge inn på bestillingsportalen og legge inn / se egne ordrer.
+              Hvis brukeren knyttes til hovedkunden ser de alle utsalgene sine; knyttes de til ett utsalg ser de kun det.
+            </div>
+
+            {users.length > 0 && (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-600 text-left">
+                  <tr>
+                    <th className="px-3 py-2">E-post</th>
+                    <th className="px-3 py-2">Navn</th>
+                    <th className="px-3 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id} className="border-t">
+                      <td className="px-3 py-2 font-mono text-xs">{u.email}</td>
+                      <td className="px-3 py-2">{u.first_name} {u.last_name}</td>
+                      <td className="px-3 py-2">
+                        <span className={`badge ${u.is_active ? 'badge-success' : 'badge-neutral'}`}>
+                          {u.is_active ? 'Aktiv' : 'Inaktiv'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <form onSubmit={handleAddUser} className="border-t pt-4 space-y-3">
+              <div className="font-medium text-sm flex items-center gap-2">
+                <UserPlus className="w-4 h-4" /> Ny portal-bruker
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <select
+                  value={targetCustomerId}
+                  onChange={e => setTargetCustomerId(Number(e.target.value))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm sm:col-span-2"
+                >
+                  {allCustomers.map(c => (
+                    <option key={c.id} value={c.id}>Tilknytt: {c.name}</option>
+                  ))}
+                </select>
+                <input
+                  required type="email"
+                  placeholder="E-post *"
+                  value={newUser.email}
+                  onChange={e => setNewUser(s => ({ ...s, email: e.target.value }))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <input
+                  type="text" placeholder="Telefon"
+                  value={newUser.phone}
+                  onChange={e => setNewUser(s => ({ ...s, phone: e.target.value }))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <input
+                  required type="text" placeholder="Fornavn *"
+                  value={newUser.first_name}
+                  onChange={e => setNewUser(s => ({ ...s, first_name: e.target.value }))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <input
+                  required type="text" placeholder="Etternavn *"
+                  value={newUser.last_name}
+                  onChange={e => setNewUser(s => ({ ...s, last_name: e.target.value }))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <input
+                  required type="text" minLength={8}
+                  placeholder="Foreløpig passord (min 8 tegn) *"
+                  value={newUser.initial_password}
+                  onChange={e => setNewUser(s => ({ ...s, initial_password: e.target.value }))}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm sm:col-span-2"
+                />
+              </div>
+              <div className="text-xs text-gray-500">
+                Tips: Bruk et sterkt passord og gi det til kunden via en sikker kanal. Be dem bytte ved første innlogging.
+              </div>
+              <button type="submit" className="btn-primary inline-flex items-center gap-2">
+                <Check className="w-4 h-4" /> Opprett bruker
+              </button>
+            </form>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -678,3 +984,5 @@ function PlanModal({ customer, onClose, onChanged }) {
     </div>
   );
 }
+
+

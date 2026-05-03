@@ -22,6 +22,10 @@ import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import AcceptInvitation from './pages/AcceptInvitation';
+import PortalLayout from './pages/portal/PortalLayout';
+import PortalDashboard from './pages/portal/PortalDashboard';
+import PortalNewOrder from './pages/portal/PortalNewOrder';
+import PortalHistory from './pages/portal/PortalHistory';
 import './index.css';
 
 // Redirect authenticated users away from login/register
@@ -45,9 +49,13 @@ function PublicRoute({ children }) {
 
 // Dashboard-rute med super-admin redirect:
 // SUPER_ADMIN i master-modus skal automatisk sendes til /admin/tenants
+// CUSTOMER_PORTAL skal til /portal
 function DashboardOrAdminRedirect() {
   const { user, isImpersonating } = useAuth();
   const role = (user?.role || '').toLowerCase();
+  if (role === 'customer_portal') {
+    return <Navigate to="/portal" replace />;
+  }
   if (role === 'super_admin' && !isImpersonating) {
     return <Navigate to="/admin/tenants" replace />;
   }
@@ -83,6 +91,17 @@ function AppRoutes() {
           <AcceptInvitation />
         </PublicRoute>
       } />
+
+      {/* Customer portal (separat layout) */}
+      <Route path="/portal" element={
+        <ProtectedRoute requiredRoles={['customer_portal']}>
+          <PortalLayout />
+        </ProtectedRoute>
+      }>
+        <Route index element={<PortalDashboard />} />
+        <Route path="ny" element={<PortalNewOrder />} />
+        <Route path="historikk" element={<PortalHistory />} />
+      </Route>
       
       {/* Protected routes */}
       <Route path="/" element={

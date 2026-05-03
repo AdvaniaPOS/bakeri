@@ -109,6 +109,10 @@ class CustomerBase(BaseModel):
         ),
     )
     is_active: bool = True
+    parent_customer_id: Optional[int] = Field(
+        default=None,
+        description="Hvis satt: denne kunden er et utsalg under hovedkunden med denne IDen."
+    )
 
 
 class CustomerCreate(CustomerBase):
@@ -133,6 +137,7 @@ class CustomerUpdate(BaseModel):
     order_lead_days: Optional[int] = Field(None, ge=7, le=84)
     delivers_on_holidays: Optional[bool] = None
     is_active: Optional[bool] = None
+    parent_customer_id: Optional[int] = None
 
 
 class CustomerResponse(CustomerBase, TimestampSchema):
