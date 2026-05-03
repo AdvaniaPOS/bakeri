@@ -290,7 +290,7 @@ def create_portal_order(
         delivery_date=data.delivery_date,
         reference=data.reference,
         customer_notes=data.customer_notes,
-        status=OrderStatus.PENDING,
+        status=OrderStatus.CONFIRMED,
         sync_status=SyncStatus.PENDING,
         is_adhoc_modified=True,  # opprettet manuelt fra kunde
         total_amount_excl_vat=Decimal("0"),

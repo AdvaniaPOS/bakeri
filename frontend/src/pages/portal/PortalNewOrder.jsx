@@ -76,6 +76,31 @@ export default function PortalNewOrder() {
     return sum;
   }, [products, quantities]);
 
+  // Valgte linjer (for oppsummering)
+  const selectedLines = useMemo(() => {
+    return products
+      .filter(p => (quantities[p.id] || 0) > 0)
+      .map(p => {
+        const q = quantities[p.id];
+        const price = Number(p.unit_price || 0);
+        return { ...p, quantity: q, line_total: q * price };
+      });
+  }, [products, quantities]);
+
+  const setQty = (productId, value) => {
+    setQuantities(q => ({
+      ...q,
+      [productId]: value === '' ? 0 : Math.max(0, parseInt(value, 10) || 0),
+    }));
+  };
+  const removeLine = (productId) => {
+    setQuantities(q => {
+      const next = { ...q };
+      delete next[productId];
+      return next;
+    });
+  };
+
   const cutoffPassed = isPastCutoff(deliveryDate);
 
   const handleSubmit = async (e) => {
@@ -221,10 +246,7 @@ export default function PortalNewOrder() {
                         type="number"
                         min="0"
                         value={quantities[p.id] || ''}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setQuantities(q => ({ ...q, [p.id]: v === '' ? 0 : Math.max(0, parseInt(v, 10) || 0) }));
-                        }}
+                        onChange={(e) => setQty(p.id, e.target.value)}
                         className="w-24 border border-gray-300 rounded-md px-2 py-1 text-sm text-right"
                       />
                     </td>
@@ -238,6 +260,64 @@ export default function PortalNewOrder() {
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      <div className="bg-white border border-amber-200 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-amber-100 flex items-center gap-3">
+          <h2 className="font-semibold text-amber-900">Oppsummering</h2>
+          <span className="text-xs text-gray-500">({selectedLines.length} {selectedLines.length === 1 ? 'linje' : 'linjer'})</span>
+        </div>
+        {selectedLines.length === 0 ? (
+          <div className="p-4 text-sm text-gray-500">Ingen produkter valgt ennå. Legg inn antall i produktlisten over.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-amber-50 text-xs uppercase text-amber-800">
+              <tr>
+                <th className="text-left px-3 py-2">Produkt</th>
+                <th className="text-right px-3 py-2">Pris</th>
+                <th className="text-right px-3 py-2 w-32">Antall</th>
+                <th className="text-right px-3 py-2">Sum</th>
+                <th className="px-3 py-2 w-12"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {selectedLines.map(l => (
+                <tr key={l.id} className="border-t border-amber-100">
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{l.name}</div>
+                    {l.sku && <div className="text-xs text-gray-500">{l.sku} · {l.unit}</div>}
+                  </td>
+                  <td className="px-3 py-2 text-right">{Number(l.unit_price).toFixed(2)} kr</td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="number"
+                      min="0"
+                      value={l.quantity}
+                      onChange={(e) => setQty(l.id, e.target.value)}
+                      className="w-24 border border-gray-300 rounded-md px-2 py-1 text-sm text-right"
+                    />
+                  </td>
+                  <td className="px-3 py-2 text-right font-medium">{l.line_total.toFixed(2)} kr</td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => removeLine(l.id)}
+                      className="text-red-600 hover:text-red-800 text-xs"
+                      title="Fjern"
+                    >✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-amber-50">
+              <tr>
+                <td colSpan={3} className="px-3 py-2 text-right font-semibold">Totalt (eks. mva)</td>
+                <td className="px-3 py-2 text-right font-bold text-amber-900">{totalAmount.toFixed(2)} kr</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
         )}
       </div>
 
