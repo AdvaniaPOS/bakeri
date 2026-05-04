@@ -487,15 +487,55 @@ async def create_portal_user(
 
     customer = get_or_404(db, Customer, customer_id, tenant.id, "Customer not found")
 
+    email_lc = data.email.lower()
     existing = db.execute(
-        select(_User).where(_User.email == data.email)
+        select(_User).where(func.lower(_User.email) == email_lc)
     ).scalar_one_or_none()
+
     if existing:
-        raise HTTPException(status_code=400, detail="En bruker med denne e-posten finnes allerede")
+        # Hvis tilhører annen tenant: blokker
+        if existing.tenant_id != tenant.id:
+            raise HTTPException(status_code=400, detail="En bruker med denne e-posten finnes allerede")
+        # Hvis aktiv (ikke slettet) på samme tenant: blokker med tydeligere melding
+        if not existing.is_deleted:
+            other_cust = ""
+            if existing.customer_id and existing.customer_id != customer.id:
+                other = db.get(Customer, existing.customer_id)
+                if other:
+                    other_cust = f" (knyttet til {other.name})"
+            raise HTTPException(
+                status_code=400,
+                detail=f"En aktiv bruker med denne e-posten finnes allerede{other_cust}. Bruk reset-passord eller en annen e-post."
+            )
+        # Mykt slettet — gjenopprett og knytt til valgt kunde
+        existing.is_deleted = False
+        existing.deleted_at = None
+        existing.role = _UserRole.CUSTOMER_PORTAL
+        existing.customer_id = customer.id
+        existing.first_name = data.first_name
+        existing.last_name = data.last_name
+        existing.phone = data.phone
+        existing.password_hash = get_password_hash(data.initial_password)
+        existing.is_active = True
+        existing.email_verified = True
+        db.commit()
+        db.refresh(existing)
+        db.add(AuditLog(
+            tenant_id=tenant.id,
+            entity_type="user",
+            entity_id=existing.id,
+            action=AuditAction.UPDATE,
+            new_values={"restored": True, "role": "customer_portal", "customer_id": customer.id, "email": existing.email},
+        ))
+        db.commit()
+        return PortalUserResponse(
+            id=existing.id, email=existing.email, first_name=existing.first_name,
+            last_name=existing.last_name, customer_id=existing.customer_id, is_active=existing.is_active,
+        )
 
     user = _User(
         tenant_id=tenant.id,
-        email=data.email.lower(),
+        email=email_lc,
         password_hash=get_password_hash(data.initial_password),
         first_name=data.first_name,
         last_name=data.last_name,
