@@ -72,6 +72,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.ingest_susoft_orders",
         "schedule": crontab(minute="*/5"),
     },
+    # HEALTH-CHECK: stabil test mot SuSoft hvert 2. minutt.
+    # Oppdaterer tenant.susoft_connection_status. Logger automatisk gjenoppretting.
+    "susoft-health-check": {
+        "task": "app.tasks.susoft_health_check",
+        "schedule": crontab(minute="*/2"),
+    },
     # Process scheduled price changes at 00:05
     "process-price-changes": {
         "task": "app.tasks.process_scheduled_price_changes",
@@ -448,6 +454,63 @@ def ingest_susoft_orders(days_back: int = 30):
     """
     from .services.susoft_ingest import ingest_susoft_orders_all_tenants
     return ingest_susoft_orders_all_tenants(days_back=days_back)
+
+
+@celery_app.task(name="app.tasks.susoft_health_check")
+def susoft_health_check():
+    """
+    Stabil helsetest mot SuSoft for alle tenants.
+
+    Kjøres hvert 2. minutt. Oppdaterer `tenant.susoft_connection_status`.
+    Hvis en tenant gjenopprettes (failed → ok), trigges umiddelbart
+    `sync_pending_orders` og `ingest_susoft_orders` slik at handlinger
+    som feilet under nedetiden blir fullført.
+    """
+    import logging
+    from .auth_models import Tenant
+    from .services.susoft import SuSoftService
+
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+    results = []
+    recovered_any = False
+
+    try:
+        tenants = db.query(Tenant).all()
+        for tenant in tenants:
+            prev_status = tenant.susoft_connection_status or "unknown"
+            try:
+                service = SuSoftService(db, tenant_id=tenant.id)
+                ok = service.test_connection()
+            except Exception as e:
+                logger.warning("Health-check exception for tenant %s: %s", tenant.id, e)
+                ok = False
+
+            new_status = "ok" if ok else "failed"
+            results.append({"tenant_id": tenant.id, "status": new_status, "prev": prev_status})
+
+            if ok and prev_status == "failed":
+                logger.info(
+                    "SuSoft connection RECOVERED for tenant %s — re-running pending sync + ingest",
+                    tenant.id,
+                )
+                recovered_any = True
+
+        # Hvis noen ble gjenopprettet, kjør pending-handlinger med en gang
+        # så ingen blir værende i kø før neste vanlige tikk.
+        if recovered_any:
+            try:
+                sync_pending_orders.delay()
+            except Exception as e:
+                logger.warning("Could not enqueue sync_pending_orders after recovery: %s", e)
+            try:
+                ingest_susoft_orders.delay()
+            except Exception as e:
+                logger.warning("Could not enqueue ingest_susoft_orders after recovery: %s", e)
+
+        return {"results": results, "recovered": recovered_any}
+    finally:
+        db.close()
 
 
 # =============================================================================

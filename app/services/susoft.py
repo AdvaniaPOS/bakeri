@@ -236,15 +236,54 @@ class SuSoftService:
         max_retries: int = 5,
         **kwargs,
     ) -> httpx.Response:
-        """Issue a request and transparently retry on HTTP 429 with exponential backoff.
+        """Issue a request and transparently retry on transient failures.
 
-        Honours the Retry-After header if present.
+        Retries on:
+        - HTTP 429 (honours Retry-After header)
+        - HTTP 5xx (server-side errors)
+        - Network errors (ConnectError, ReadTimeout, RemoteProtocolError, etc.)
+
+        Backoff schedule: 1s → 2s → 4s → 8s → 16s → 30s (capped).
+        Total max wait ≈ 60s across 5 retries — covers brief outages without
+        blocking workers too long.
         """
         delay = 1.0
+        last_exc: Optional[Exception] = None
         for attempt in range(max_retries + 1):
-            response = self.client.request(method, path, **kwargs)
-            if response.status_code != 429 or attempt == max_retries:
+            try:
+                response = self.client.request(method, path, **kwargs)
+                last_exc = None
+            except (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpx.PoolTimeout,
+                httpx.RemoteProtocolError,
+                httpx.NetworkError,
+            ) as e:
+                last_exc = e
+                if attempt == max_retries:
+                    logger.error(
+                        "SuSoft network error on %s %s after %d attempts: %s",
+                        method, path, attempt + 1, e,
+                    )
+                    self._update_tenant_status("failed", f"Network error: {e}")
+                    raise SuSoftAPIError(f"Connection lost to SuSoft: {e}") from e
+                wait = min(delay, 30.0)
+                logger.warning(
+                    "SuSoft network error on %s %s (attempt %d/%d): %s — retrying in %.1fs",
+                    method, path, attempt + 1, max_retries, e, wait,
+                )
+                time.sleep(wait)
+                delay = min(delay * 2, 30.0)
+                continue
+
+            # Retry on 429 / 5xx
+            should_retry = response.status_code == 429 or 500 <= response.status_code < 600
+            if not should_retry or attempt == max_retries:
                 return response
+
             retry_after = response.headers.get("Retry-After")
             try:
                 wait = float(retry_after) if retry_after else delay
@@ -252,8 +291,8 @@ class SuSoftService:
                 wait = delay
             wait = min(max(wait, 0.5), 30.0)
             logger.warning(
-                "SuSoft returned 429 for %s %s (attempt %d/%d); sleeping %.1fs",
-                method, path, attempt + 1, max_retries, wait,
+                "SuSoft returned %d for %s %s (attempt %d/%d); sleeping %.1fs",
+                response.status_code, method, path, attempt + 1, max_retries, wait,
             )
             time.sleep(wait)
             delay = min(delay * 2, 30.0)
@@ -571,18 +610,64 @@ class SuSoftService:
             headers = {"Content-Type": "application/json"}
             if self._cfg_shop_key:
                 headers["X-Shop-Url-Key"] = self._cfg_shop_key
-            response = self.client.post(
-                "/user/auth",
-                json={"login": self._cfg_login, "password": self._cfg_password},
-                headers=headers,
-            )
+
+            # Auth-call: retry på nettverksfeil og 5xx (3 forsøk).
+            # 429/Retry-After håndteres også. Bruker IKKE _request_with_throttle_retry
+            # her fordi den oppdaterer tenant-status — vi gjør det selv nedenfor.
+            delay = 1.0
+            response = None
+            for attempt in range(3):
+                try:
+                    response = self.client.post(
+                        "/user/auth",
+                        json={"login": self._cfg_login, "password": self._cfg_password},
+                        headers=headers,
+                    )
+                except (
+                    httpx.ConnectError,
+                    httpx.ConnectTimeout,
+                    httpx.ReadTimeout,
+                    httpx.WriteTimeout,
+                    httpx.PoolTimeout,
+                    httpx.RemoteProtocolError,
+                    httpx.NetworkError,
+                ) as e:
+                    if attempt == 2:
+                        logger.error("SuSoft auth network error (tenant=%s): %s", self.tenant_id, e)
+                        self._update_tenant_status("failed", f"Network error: {e}")
+                        return None
+                    logger.warning(
+                        "SuSoft auth network error (attempt %d/3): %s — retrying in %.1fs",
+                        attempt + 1, e, delay,
+                    )
+                    time.sleep(delay)
+                    delay = min(delay * 2, 8.0)
+                    continue
+
+                if 500 <= response.status_code < 600 and attempt < 2:
+                    logger.warning(
+                        "SuSoft auth got %d (attempt %d/3) — retrying in %.1fs",
+                        response.status_code, attempt + 1, delay,
+                    )
+                    time.sleep(delay)
+                    delay = min(delay * 2, 8.0)
+                    continue
+                break
+
+            if response is None:
+                self._update_tenant_status("failed", "No response from SuSoft auth")
+                return None
+
             if response.is_success:
                 data = response.json()
                 token = data.get("token")
                 if token:
                     _token_cache[cache_key] = (token, datetime.utcnow() + timedelta(hours=23))
+                    # Mark connection healthy on successful auth
+                    self._update_tenant_status("ok", None)
                     return token
                 logger.error("SuSoft auth ga 200 men ingen token: %s", response.text[:500])
+                self._update_tenant_status("failed", "Auth 200 OK but no token in response")
                 return None
             else:
                 logger.error(
