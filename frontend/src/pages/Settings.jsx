@@ -1139,6 +1139,83 @@ export default function Settings() {
               <p className="text-sm text-gray-500">Konfigurer tidsfrister for bestillinger</p>
             </div>
           </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cutoff time (Oslo)</label>
+                <input
+                  type="time"
+                  value={`${String(tenantSettings.cutoff_hour?.value ?? 15).padStart(2, '0')}:${String(tenantSettings.cutoff_minute?.value ?? 0).padStart(2, '0')}`}
+                  onChange={(e) => {
+                    const [h, m] = e.target.value.split(':').map(n => parseInt(n, 10));
+                    updateSetting('cutoff_hour', h);
+                    updateSetting('cutoff_minute', m);
+                  }}
+                  className="input"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Bestillinger må være inne før denne tiden. Etter cutoff flyttes leveringsdato fram.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Ikke-leveringsdager</label>
+                <div className="flex flex-wrap gap-1.5 pt-1.5">
+                  {[
+                    { v: 0, label: 'Man' },
+                    { v: 1, label: 'Tir' },
+                    { v: 2, label: 'Ons' },
+                    { v: 3, label: 'Tor' },
+                    { v: 4, label: 'Fre' },
+                    { v: 5, label: 'Lør' },
+                    { v: 6, label: 'Søn' },
+                  ].map(({ v, label }) => {
+                    const current = Array.isArray(tenantSettings.non_delivery_weekdays?.value)
+                      ? tenantSettings.non_delivery_weekdays.value
+                      : [5, 6, 0];
+                    const active = current.includes(v);
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => {
+                          const next = active ? current.filter(x => x !== v) : [...current, v].sort((a, b) => a - b);
+                          updateSetting('non_delivery_weekdays', next);
+                        }}
+                        className={`px-2.5 py-1.5 text-xs rounded border ${
+                          active
+                            ? 'bg-amber-100 border-amber-400 text-amber-900'
+                            : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Dager bakeriet ikke leverer. Default: lør, søn, man (siden det ikke produseres i helga).
+                </p>
+              </div>
+            </div>
+
+            <div className="text-xs text-gray-600 bg-amber-50 border border-amber-200 rounded p-3">
+              <strong>Eksempel med standardverdier:</strong> Bestillinger torsdag før cutoff → fredag.
+              Etter cutoff torsdag (eller før cutoff fredag) → tirsdag. Etter cutoff fredag → onsdag.
+              Produkter med produksjonsdager øker dette ytterligere.
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={saveTenantSettings}
+                disabled={savingSettings}
+                className="btn-primary text-sm flex items-center gap-2"
+              >
+                <Save className="w-4 h-4" />
+                {savingSettings ? 'Lagrer…' : 'Lagre bestillingsfrister'}
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Notifications */}

@@ -71,6 +71,7 @@ export default function Products() {
         batch_size: p.batch_size ?? 1,
         production_step: p.production_step || '',
         production_lead_minutes: p.production_lead_minutes ?? 0,
+        production_days: p.production_days ?? 0,
       }));
       setProducts(mapped);
       setError(null);
@@ -410,6 +411,7 @@ function ProductionEditModal({ product, onClose, onSaved, authFetch }) {
   const [batchSize, setBatchSize] = useState(product.batch_size ?? 1);
   const [productionStep, setProductionStep] = useState(product.production_step || '');
   const [leadMinutes, setLeadMinutes] = useState(product.production_lead_minutes ?? 0);
+  const [productionDays, setProductionDays] = useState(product.production_days ?? 0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -425,6 +427,7 @@ function ProductionEditModal({ product, onClose, onSaved, authFetch }) {
           batch_size: Math.max(1, parseInt(batchSize, 10) || 1),
           production_step: productionStep.trim() || null,
           production_lead_minutes: Math.max(0, parseInt(leadMinutes, 10) || 0),
+          production_days: Math.max(0, Math.min(14, parseInt(productionDays, 10) || 0)),
         }),
       });
       if (!response.ok) {
@@ -436,6 +439,7 @@ function ProductionEditModal({ product, onClose, onSaved, authFetch }) {
         batch_size: Math.max(1, parseInt(batchSize, 10) || 1),
         production_step: productionStep.trim() || '',
         production_lead_minutes: Math.max(0, parseInt(leadMinutes, 10) || 0),
+        production_days: Math.max(0, Math.min(14, parseInt(productionDays, 10) || 0)),
       });
     } catch (err) {
       setError(err.message);
@@ -496,6 +500,24 @@ function ProductionEditModal({ product, onClose, onSaved, authFetch }) {
               onChange={(e) => setLeadMinutes(e.target.value)}
               className="input"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Produksjonsdager
+              <span className="ml-1 text-xs text-gray-500">(øker tidligst leveringsdato)</span>
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="14"
+              value={productionDays}
+              onChange={(e) => setProductionDays(e.target.value)}
+              className="input"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Antall ekstra produksjonsdager varen krever. 0 = ingen ekstra ventetid.
+              Hvis ordren inneholder flere varer er det den med flest produksjonsdager som gjelder.
+            </p>
           </div>
           {error && (
             <div className="p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">{error}</div>

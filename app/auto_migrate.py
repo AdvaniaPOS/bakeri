@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 _BACKFILL_DEFAULTS: dict[tuple[str, str], Any] = {
     ("products", "batch_size"): 1,
     ("products", "production_lead_minutes"): 0,
+    ("products", "production_days"): 0,
     ("products", "is_active_overridden"): False,
     ("order_lines", "delivered_quantity"): 0,
     ("order_lines", "waste_quantity"): 0,

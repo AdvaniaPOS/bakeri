@@ -33,7 +33,7 @@ from ..schemas import OrderResponse
 from .pricing import get_effective_price
 from ..cutoff import is_order_locked
 from ..services.order_numbering import allocate_order_no
-from ..time_utils import today_oslo, is_past_cutoff
+from ..time_utils import today_oslo, is_past_cutoff, is_past_cutoff_tenant, earliest_delivery_date
 
 import logging
 logger = logging.getLogger(__name__)
@@ -75,6 +75,13 @@ class PortalProduct(BaseModel):
     vat_rate: Decimal
     description: Optional[str] = None
     is_favorite: bool = False
+    production_days: int = 0
+
+
+class PortalEarliestDeliveryResponse(BaseModel):
+    earliest_date: date
+    production_days: int
+    reason: str
 
 
 class PortalRestrictionInfo(BaseModel):
@@ -260,8 +267,46 @@ def list_portal_favorites(
             unit_price=price, vat_rate=p.vat_rate,
             description=p.description,
             is_favorite=True,
+            production_days=p.production_days or 0,
         ))
     return out
+
+
+@router.get("/earliest-delivery", response_model=PortalEarliestDeliveryResponse)
+def get_earliest_delivery(
+    product_ids: Optional[str] = None,
+    user: User = Depends(get_portal_user),
+    db: Session = Depends(get_db),
+):
+    """Returner tidligst mulig leveringsdato gitt valgte produkter (komma-separert id-liste).
+
+    Tar høyde for tenant.cutoff, non_delivery_weekdays og max(production_days) over varene.
+    """
+    tenant_settings = (user.tenant.settings or {}) if user.tenant else {}
+    max_prod_days = 0
+    if product_ids:
+        try:
+            ids = [int(x) for x in product_ids.split(",") if x.strip()]
+        except ValueError:
+            ids = []
+        if ids:
+            rows = db.execute(
+                select(Product.production_days).where(
+                    Product.tenant_id == user.tenant_id,
+                    Product.id.in_(ids),
+                )
+            ).all()
+            max_prod_days = max((r[0] or 0 for r in rows), default=0)
+    earliest = earliest_delivery_date(tenant_settings, production_days=max_prod_days)
+    return PortalEarliestDeliveryResponse(
+        earliest_date=earliest,
+        production_days=max_prod_days,
+        reason=(
+            f"Inkluderer cutoff og {max_prod_days} produksjonsdag(er)."
+            if max_prod_days else
+            "Basert på cutoff og bakeriets ikke-leveringsdager."
+        ),
+    )
 
 
 @router.get("/restrictions", response_model=PortalRestrictionInfo)
@@ -323,6 +368,7 @@ def list_products(
             unit_price=price, vat_rate=p.vat_rate,
             description=p.description,
             is_favorite=p.id in fav_product_ids,
+            production_days=p.production_days or 0,
         ))
     return out
 
@@ -401,11 +447,31 @@ def create_portal_order(
                 ),
             )
 
-    # Sjekk cutoff: en ordre for i morgen kan ikke opprettes etter 15:00 i dag
-    if is_past_cutoff(data.delivery_date):
+    # Sjekk cutoff: en ordre for i morgen kan ikke opprettes etter cutoff i dag
+    tenant_settings = (user.tenant.settings or {}) if user.tenant else {}
+    if is_past_cutoff_tenant(data.delivery_date, tenant_settings):
         raise HTTPException(
             status_code=400,
             detail="Bestillingsfristen for denne datoen har passert. Ta kontakt med bakeriet."
+        )
+
+    # Sjekk produksjonsdager: max(production_days) på tvers av varene må være tilfredsstilt
+    product_ids = [l.product_id for l in data.lines]
+    prod_days_rows = db.execute(
+        select(Product.id, Product.production_days).where(
+            Product.tenant_id == user.tenant_id,
+            Product.id.in_(product_ids),
+        )
+    ).all()
+    max_prod_days = max((row.production_days or 0 for row in prod_days_rows), default=0)
+    earliest = earliest_delivery_date(tenant_settings, production_days=max_prod_days)
+    if data.delivery_date < earliest:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Tidligst mulig leveringsdato for denne ordren er {earliest.isoformat()} "
+                f"({max_prod_days} produksjonsdag(er) kreves)."
+            ),
         )
 
     tenant = user.tenant

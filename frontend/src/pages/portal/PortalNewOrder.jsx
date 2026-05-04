@@ -28,6 +28,8 @@ export default function PortalNewOrder() {
 
   const [outletId, setOutletId] = useState(null);
   const [deliveryDate, setDeliveryDate] = useState(tomorrowIso());
+  const [earliestDate, setEarliestDate] = useState(null);
+  const [earliestReason, setEarliestReason] = useState('');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [products, setProducts] = useState([]);
@@ -124,7 +126,29 @@ export default function PortalNewOrder() {
     });
   };
 
+  // Hent tidligst mulig leveringsdato fra backend basert på valgte produkter
+  useEffect(() => {
+    const ids = Object.entries(quantities)
+      .filter(([, q]) => q > 0)
+      .map(([pid]) => pid);
+    const token = localStorage.getItem('access_token');
+    const url = ids.length
+      ? `${API_BASE}/portal/earliest-delivery?product_ids=${ids.join(',')}`
+      : `${API_BASE}/portal/earliest-delivery`;
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return;
+        setEarliestDate(data.earliest_date);
+        setEarliestReason(data.reason || '');
+        // Skyv leveringsdato fram hvis brukeren har valgt en for tidlig dato
+        setDeliveryDate(prev => (prev && prev < data.earliest_date) ? data.earliest_date : prev);
+      })
+      .catch(() => {});
+  }, [quantities, outletId]);
+
   const cutoffPassed = isPastCutoff(deliveryDate);
+  const tooEarly = earliestDate && deliveryDate && deliveryDate < earliestDate;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -135,6 +159,7 @@ export default function PortalNewOrder() {
       .map(([pid, q]) => ({ product_id: Number(pid), quantity: Number(q) }));
     if (lines.length === 0) return setError('Legg inn antall på minst ett produkt');
     if (cutoffPassed) return setError('Bestillingsfristen for denne datoen har passert (kl 15:00 dagen før).');
+    if (tooEarly) return setError(`Tidligst mulig leveringsdato er ${earliestDate}.`);
 
     setSubmitting(true);
     try {
@@ -195,13 +220,23 @@ export default function PortalNewOrder() {
             <input
               type="date"
               value={deliveryDate}
-              min={new Date().toISOString().slice(0, 10)}
+              min={earliestDate || new Date().toISOString().slice(0, 10)}
               onChange={(e) => setDeliveryDate(e.target.value)}
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
             />
-            {cutoffPassed && (
+            {earliestDate && (
+              <div className="mt-1 text-xs text-amber-700">
+                Tidligst mulig: <strong>{earliestDate}</strong>. {earliestReason}
+              </div>
+            )}
+            {tooEarly && (
               <div className="mt-1 text-xs text-red-700">
-                ⚠ Cutoff for denne datoen er passert (15:00 dagen før).
+                ⚠ Valgt dato er før tidligst mulig leveringsdato.
+              </div>
+            )}
+            {cutoffPassed && !tooEarly && (
+              <div className="mt-1 text-xs text-red-700">
+                ⚠ Cutoff for denne datoen er passert.
               </div>
             )}
           </div>

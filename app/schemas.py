@@ -205,6 +205,10 @@ class ProductBase(BaseModel):
         default=0, ge=0,
         description="Estimert tid pr. batch i minutter (heving + steking).",
     )
+    production_days: int = Field(
+        default=0, ge=0, le=14,
+        description="Antall produksjonsdager varen krever. Bestemmer tidligst mulig leveringsdato i portalen.",
+    )
 
 
 class ProductCreate(ProductBase):
@@ -226,6 +230,7 @@ class ProductUpdate(BaseModel):
     batch_size: Optional[int] = Field(None, ge=1)
     production_step: Optional[str] = Field(None, max_length=100)
     production_lead_minutes: Optional[int] = Field(None, ge=0)
+    production_days: Optional[int] = Field(None, ge=0, le=14)
 
 
 class ProductResponse(ProductBase, TimestampSchema):

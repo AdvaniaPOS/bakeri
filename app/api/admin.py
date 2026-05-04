@@ -737,6 +737,20 @@ _ALLOWED_SETTINGS = {
     "pdf_header_subtitle": {"type": "string", "default": "", "description": "Undertittel som vises i PDF-headeren"},
     # Onboarding-wizard: settes til True når brukeren har fullført velkomst-flyten
     "onboarding_completed": {"type": "bool", "default": False, "description": "Onboarding-wizard er fullført"},
+    # Bestillingsfrister
+    "cutoff_hour": {
+        "type": "int_range", "min": 0, "max": 23, "default": 15,
+        "description": "Time på dagen (0-23, Oslo-tid) der bestillingsfristen for neste dag stenger.",
+    },
+    "cutoff_minute": {
+        "type": "int_range", "min": 0, "max": 59, "default": 0,
+        "description": "Minutt for cutoff (0-59).",
+    },
+    # Liste med Python weekday-int (0=man, 6=søn) som IKKE er gyldige leveringsdager.
+    "non_delivery_weekdays": {
+        "type": "weekday_list", "default": [5, 6, 0],
+        "description": "Ukedager (0=man..6=søn) som ikke skal være gyldige leveringsdager (f.eks. helg + mandag).",
+    },
 }
 
 
@@ -758,6 +772,18 @@ def _validate_setting(key: str, value):
                 raise HTTPException(status_code=400, detail=f"{key} må være 'today', 'tomorrow' eller heltall")
         else:
             raise HTTPException(status_code=400, detail=f"{key} må være tekst eller heltall")
+    if t == "int_range":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise HTTPException(status_code=400, detail=f"{key} må være heltall")
+        lo, hi = spec.get("min", 0), spec.get("max", 100)
+        if value < lo or value > hi:
+            raise HTTPException(status_code=400, detail=f"{key} må være {lo}..{hi}")
+    if t == "weekday_list":
+        if not isinstance(value, list):
+            raise HTTPException(status_code=400, detail=f"{key} må være en liste")
+        for v in value:
+            if not isinstance(v, int) or isinstance(v, bool) or not (0 <= v <= 6):
+                raise HTTPException(status_code=400, detail=f"{key}: alle verdier må være 0..6 (0=mandag)")
     return value
 
 

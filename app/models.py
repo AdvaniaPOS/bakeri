@@ -462,6 +462,10 @@ class Product(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
         Integer, default=0, nullable=False, server_default="0",
         comment="Estimert tid pr. batch i minutter (heving + steking)."
     )
+    production_days: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0",
+        comment="Antall produksjonsdager varen krever (øker minimum levering med dette antall produksjonsdager)."
+    )
 
     # Allergener (komma-separert liste, synces fra SuSoft, kan overstyres lokalt)
     allergens: Mapped[Optional[str]] = mapped_column(
