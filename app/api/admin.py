@@ -751,6 +751,19 @@ _ALLOWED_SETTINGS = {
         "type": "weekday_list", "default": [5, 6, 0],
         "description": "Ukedager (0=man..6=søn) som ikke skal være gyldige leveringsdager (f.eks. helg + mandag).",
     },
+    # Per-ukedag cutoff-skjema. Liste av {dw, cw, h, m}. dw=leveringsdag, cw=cutoff-dag.
+    # Mangler en dw = ikke leveringsdag.
+    "delivery_cutoffs": {
+        "type": "delivery_cutoffs",
+        "default": [
+            {"dw": 0, "cw": 3, "h": 15, "m": 0},
+            {"dw": 1, "cw": 4, "h": 15, "m": 0},
+            {"dw": 2, "cw": 1, "h": 15, "m": 0},
+            {"dw": 3, "cw": 2, "h": 15, "m": 0},
+            {"dw": 4, "cw": 3, "h": 15, "m": 0},
+        ],
+        "description": "Per-ukedag bestillingsfrist. Hver oppføring: {dw=leveringsdag 0-6, cw=cutoff-dag 0-6, h=time, m=minutt}.",
+    },
 }
 
 
@@ -784,6 +797,23 @@ def _validate_setting(key: str, value):
         for v in value:
             if not isinstance(v, int) or isinstance(v, bool) or not (0 <= v <= 6):
                 raise HTTPException(status_code=400, detail=f"{key}: alle verdier må være 0..6 (0=mandag)")
+    if t == "delivery_cutoffs":
+        if not isinstance(value, list):
+            raise HTTPException(status_code=400, detail=f"{key} må være en liste")
+        seen = set()
+        for r in value:
+            if not isinstance(r, dict):
+                raise HTTPException(status_code=400, detail=f"{key}: hver oppføring må være objekt")
+            try:
+                dw = int(r.get("dw")); cw = int(r.get("cw"))
+                h = int(r.get("h", 15)); m = int(r.get("m", 0))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{key}: ugyldige felt i oppføring")
+            if not (0 <= dw <= 6 and 0 <= cw <= 6 and 0 <= h <= 23 and 0 <= m <= 59):
+                raise HTTPException(status_code=400, detail=f"{key}: dw/cw må være 0..6, h 0..23, m 0..59")
+            if dw in seen:
+                raise HTTPException(status_code=400, detail=f"{key}: duplisert leveringsdag {dw}")
+            seen.add(dw)
     return value
 
 

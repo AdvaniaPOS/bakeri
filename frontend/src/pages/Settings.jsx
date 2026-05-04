@@ -416,6 +416,87 @@ function CompanyInfoCard({ authFetch, tenant, updateTenant }) {
   );
 }
 
+const WEEKDAY_LABELS = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag'];
+const WEEKDAY_SHORT  = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
+
+function DeliveryCutoffsEditor({ value, onChange }) {
+  // value = list of {dw, cw, h, m}. Map by dw for quick lookup.
+  const byDw = new Map(value.map(r => [r.dw, r]));
+
+  const setRule = (dw, patch) => {
+    const existing = byDw.get(dw) || { dw, cw: (dw === 0 ? 3 : (dw - 1 + 7) % 7), h: 15, m: 0 };
+    const next = { ...existing, ...patch, dw };
+    const others = value.filter(r => r.dw !== dw);
+    onChange([...others, next].sort((a, b) => a.dw - b.dw));
+  };
+
+  const toggleDay = (dw, enabled) => {
+    if (enabled) {
+      // Default: cutoff = previous weekday at 15:00
+      const cw = (dw - 1 + 7) % 7;
+      setRule(dw, { cw, h: 15, m: 0 });
+    } else {
+      onChange(value.filter(r => r.dw !== dw));
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-12 gap-2 text-xs font-medium text-gray-500 px-1">
+        <div className="col-span-1">På</div>
+        <div className="col-span-3">Leveringsdag</div>
+        <div className="col-span-4">Cutoff-dag</div>
+        <div className="col-span-4">Klokkeslett</div>
+      </div>
+      {[0, 1, 2, 3, 4, 5, 6].map(dw => {
+        const rule = byDw.get(dw);
+        const enabled = !!rule;
+        return (
+          <div key={dw} className="grid grid-cols-12 gap-2 items-center px-1 py-1.5 rounded hover:bg-gray-50">
+            <div className="col-span-1">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => toggleDay(dw, e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 text-amber-600"
+              />
+            </div>
+            <div className="col-span-3 text-sm font-medium text-gray-800">
+              {WEEKDAY_LABELS[dw]}
+            </div>
+            <div className="col-span-4">
+              <select
+                value={rule?.cw ?? ''}
+                disabled={!enabled}
+                onChange={(e) => setRule(dw, { cw: parseInt(e.target.value, 10) })}
+                className="input text-sm py-1.5 disabled:bg-gray-100 disabled:text-gray-400"
+              >
+                {WEEKDAY_LABELS.map((lbl, i) => (
+                  <option key={i} value={i}>{lbl}</option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-4">
+              <input
+                type="time"
+                disabled={!enabled}
+                value={enabled
+                  ? `${String(rule.h).padStart(2, '0')}:${String(rule.m).padStart(2, '0')}`
+                  : '15:00'}
+                onChange={(e) => {
+                  const [h, m] = e.target.value.split(':').map(n => parseInt(n, 10));
+                  setRule(dw, { h, m });
+                }}
+                className="input text-sm py-1.5 disabled:bg-gray-100 disabled:text-gray-400"
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Settings() {
   const { authFetch, user, tenant, updateTenant, isAdmin } = useAuth();
   const [syncStatus, setSyncStatus] = useState({ customers: null, products: null });
@@ -1136,85 +1217,40 @@ export default function Settings() {
             </div>
             <div>
               <h2 className="font-semibold text-gray-900">Bestillingsfrister</h2>
-              <p className="text-sm text-gray-500">Konfigurer tidsfrister for bestillinger</p>
+              <p className="text-sm text-gray-500">
+                Sett bestillingsfrist (cutoff) per leveringsdag. Hak av kun de dagene dere leverer.
+              </p>
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Cutoff time (Oslo)</label>
-                <input
-                  type="time"
-                  value={`${String(tenantSettings.cutoff_hour?.value ?? 15).padStart(2, '0')}:${String(tenantSettings.cutoff_minute?.value ?? 0).padStart(2, '0')}`}
-                  onChange={(e) => {
-                    const [h, m] = e.target.value.split(':').map(n => parseInt(n, 10));
-                    updateSetting('cutoff_hour', h);
-                    updateSetting('cutoff_minute', m);
-                  }}
-                  className="input"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Bestillinger må være inne før denne tiden. Etter cutoff flyttes leveringsdato fram.
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Ikke-leveringsdager</label>
-                <div className="flex flex-wrap gap-1.5 pt-1.5">
-                  {[
-                    { v: 0, label: 'Man' },
-                    { v: 1, label: 'Tir' },
-                    { v: 2, label: 'Ons' },
-                    { v: 3, label: 'Tor' },
-                    { v: 4, label: 'Fre' },
-                    { v: 5, label: 'Lør' },
-                    { v: 6, label: 'Søn' },
-                  ].map(({ v, label }) => {
-                    const current = Array.isArray(tenantSettings.non_delivery_weekdays?.value)
-                      ? tenantSettings.non_delivery_weekdays.value
-                      : [5, 6, 0];
-                    const active = current.includes(v);
-                    return (
-                      <button
-                        key={v}
-                        type="button"
-                        onClick={() => {
-                          const next = active ? current.filter(x => x !== v) : [...current, v].sort((a, b) => a - b);
-                          updateSetting('non_delivery_weekdays', next);
-                        }}
-                        className={`px-2.5 py-1.5 text-xs rounded border ${
-                          active
-                            ? 'bg-amber-100 border-amber-400 text-amber-900'
-                            : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Dager bakeriet ikke leverer. Default: lør, søn, man (siden det ikke produseres i helga).
-                </p>
-              </div>
-            </div>
+          <DeliveryCutoffsEditor
+            value={Array.isArray(tenantSettings.delivery_cutoffs?.value)
+              ? tenantSettings.delivery_cutoffs.value
+              : [
+                  { dw: 0, cw: 3, h: 15, m: 0 },
+                  { dw: 1, cw: 4, h: 15, m: 0 },
+                  { dw: 2, cw: 1, h: 15, m: 0 },
+                  { dw: 3, cw: 2, h: 15, m: 0 },
+                  { dw: 4, cw: 3, h: 15, m: 0 },
+                ]}
+            onChange={(next) => updateSetting('delivery_cutoffs', next)}
+          />
 
-            <div className="text-xs text-gray-600 bg-amber-50 border border-amber-200 rounded p-3">
-              <strong>Eksempel med standardverdier:</strong> Bestillinger torsdag før cutoff → fredag.
-              Etter cutoff torsdag (eller før cutoff fredag) → tirsdag. Etter cutoff fredag → onsdag.
-              Produkter med produksjonsdager øker dette ytterligere.
-            </div>
+          <div className="text-xs text-gray-600 bg-amber-50 border border-amber-200 rounded p-3 mt-4">
+            <strong>Standard:</strong> Mandag-levering må bestilles før Torsdag 15:00 (siden bakeriet ikke
+            jobber i helga). Fredag-levering før Torsdag 15:00. Produkter med produksjonsdager øker
+            ventetida ytterligere.
+          </div>
 
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={saveTenantSettings}
-                disabled={savingSettings}
-                className="btn-primary text-sm flex items-center gap-2"
-              >
-                <Save className="w-4 h-4" />
-                {savingSettings ? 'Lagrer…' : 'Lagre bestillingsfrister'}
-              </button>
-            </div>
+          <div className="flex justify-end pt-4">
+            <button
+              onClick={saveTenantSettings}
+              disabled={savingSettings}
+              className="btn-primary text-sm flex items-center gap-2"
+            >
+              <Save className="w-4 h-4" />
+              {savingSettings ? 'Lagrer…' : 'Lagre bestillingsfrister'}
+            </button>
           </div>
         </div>
 

@@ -81,83 +81,99 @@ DEFAULT_NON_DELIVERY_WEEKDAYS = [5, 6, 0]  # lør, søn, man
 """Standard ikke-leveringsdager. 0=mandag, 6=søndag (Python weekday())."""
 
 
-def _tenant_cutoff(tenant_settings: dict | None) -> tuple[int, int]:
-    """Hent konfigurerbar cutoff fra tenant.settings, default 15:00."""
-    s = tenant_settings or {}
-    h = s.get("cutoff_hour", CUTOFF_HOUR)
-    m = s.get("cutoff_minute", CUTOFF_MINUTE)
-    try:
-        h = int(h); m = int(m)
-        if not (0 <= h <= 23): h = CUTOFF_HOUR
-        if not (0 <= m <= 59): m = CUTOFF_MINUTE
-    except (TypeError, ValueError):
-        h, m = CUTOFF_HOUR, CUTOFF_MINUTE
-    return h, m
+# delivery_cutoffs: liste av {dw, cw, h, m}
+#   dw = delivery weekday (0=man..6=søn)
+#   cw = cutoff weekday (0=man..6=søn) — må være FØR dw i uka (eller samme uke før dw)
+#   h, m = klokkeslett (Oslo-tid)
+# Mangler en weekday i lista = ingen levering den dagen.
+DEFAULT_DELIVERY_CUTOFFS = [
+    {"dw": 0, "cw": 3, "h": 15, "m": 0},  # Mandag ← Torsdag 15:00
+    {"dw": 1, "cw": 4, "h": 15, "m": 0},  # Tirsdag ← Fredag 15:00
+    {"dw": 2, "cw": 1, "h": 15, "m": 0},  # Onsdag ← Tirsdag 15:00
+    {"dw": 3, "cw": 2, "h": 15, "m": 0},  # Torsdag ← Onsdag 15:00
+    {"dw": 4, "cw": 3, "h": 15, "m": 0},  # Fredag ← Torsdag 15:00
+]
 
 
-def _tenant_non_delivery_set(tenant_settings: dict | None) -> set[int]:
-    """Hent ikke-leveringsdager fra tenant.settings (liste med Python weekday-int 0-6)."""
+def _delivery_schedule(tenant_settings: dict | None) -> dict[int, dict]:
+    """Returner dict {delivery_weekday: rule} fra tenant.settings, default DEFAULT_DELIVERY_CUTOFFS."""
     s = tenant_settings or {}
-    raw = s.get("non_delivery_weekdays", DEFAULT_NON_DELIVERY_WEEKDAYS)
-    if not isinstance(raw, (list, tuple)):
-        return set(DEFAULT_NON_DELIVERY_WEEKDAYS)
-    out = set()
-    for v in raw:
+    raw = s.get("delivery_cutoffs", DEFAULT_DELIVERY_CUTOFFS)
+    if not isinstance(raw, list):
+        raw = DEFAULT_DELIVERY_CUTOFFS
+    out: dict[int, dict] = {}
+    for r in raw:
+        if not isinstance(r, dict):
+            continue
         try:
-            iv = int(v)
+            dw = int(r.get("dw", -1))
+            cw = int(r.get("cw", -1))
+            h = int(r.get("h", 15))
+            m = int(r.get("m", 0))
         except (TypeError, ValueError):
             continue
-        if 0 <= iv <= 6:
-            out.add(iv)
+        if not (0 <= dw <= 6 and 0 <= cw <= 6 and 0 <= h <= 23 and 0 <= m <= 59):
+            continue
+        out[dw] = {"dw": dw, "cw": cw, "h": h, "m": m}
     return out
 
 
-def cutoff_datetime_for_tenant(delivery_date: date, tenant_settings: dict | None) -> datetime:
-    h, m = _tenant_cutoff(tenant_settings)
-    cutoff_date = delivery_date - timedelta(days=1)
-    return datetime.combine(cutoff_date, time(h, m), tzinfo=OSLO_TZ)
+def cutoff_for_delivery(delivery_date: date, tenant_settings: dict | None) -> datetime | None:
+    """Beregn cutoff-tidspunkt for en gitt leveringsdato.
+
+    Returnerer None hvis dagen ikke har en regel (= ikke leveringsdag).
+    Cutoff defineres som siste forekomst av cutoff-ukedagen FØR (eller samme dag som)
+    leveringsdatoen, men aldri leveringsdatoen selv.
+    """
+    schedule = _delivery_schedule(tenant_settings)
+    rule = schedule.get(delivery_date.weekday())
+    if not rule:
+        return None
+    # Antall dager bakover fra delivery_date til siste forekomst av rule.cw
+    diff = (delivery_date.weekday() - rule["cw"]) % 7
+    if diff == 0:
+        diff = 7  # cutoff må være FØR leveringsdato
+    cutoff_date = delivery_date - timedelta(days=diff)
+    return datetime.combine(cutoff_date, time(rule["h"], rule["m"]), tzinfo=OSLO_TZ)
 
 
 def is_past_cutoff_tenant(delivery_date: date, tenant_settings: dict | None,
                           now: datetime | None = None) -> bool:
+    """True hvis bestillingsfristen for denne leveringsdatoen har passert
+    (eller dagen ikke er en gyldig leveringsdag i det hele tatt)."""
+    co = cutoff_for_delivery(delivery_date, tenant_settings)
+    if co is None:
+        return True  # ikke leveringsdag — blokker
     current = now or now_oslo()
     if current.tzinfo is None:
         current = current.replace(tzinfo=OSLO_TZ)
-    return current >= cutoff_datetime_for_tenant(delivery_date, tenant_settings)
+    return current >= co
 
 
 def earliest_delivery_date(tenant_settings: dict | None,
                            production_days: int = 0,
                            now: datetime | None = None) -> date:
-    """
-    Beregn tidligst mulig leveringsdato gitt:
-      - tenant cutoff (default 15:00)
-      - tenant.non_delivery_weekdays (default lør/søn/man)
+    """Tidligst mulig leveringsdato, gitt:
+      - tenant.delivery_cutoffs (per-ukedag cutoff-skjema)
       - et minimum antall produksjonsdager (max på tvers av varene i ordren)
 
-    Logikk:
-      base_offset = 1 hvis vi er FØR cutoff i dag, ellers 2.
-      effective_offset = base_offset + production_days
-      Tell `effective_offset` framover fra i dag, hopp over ikke-leveringsdager.
+    Algoritme: gå framover fra i morgen; returner første dato D der:
+      - D.weekday() har en regel i skjemaet
+      - cutoff_for_delivery(D) er i framtiden ift. (now + production_days)
+    Letingen avsluttes etter 21 dager (fail-safe).
     """
     current = now or now_oslo()
     if current.tzinfo is None:
         current = current.replace(tzinfo=OSLO_TZ)
-
+    effective_now = current + timedelta(days=max(0, int(production_days or 0)))
     today = current.date()
-    h, m = _tenant_cutoff(tenant_settings)
-    cutoff_today = datetime.combine(today, time(h, m), tzinfo=OSLO_TZ)
 
-    base_offset = 1 if current < cutoff_today else 2
-    needed = base_offset + max(0, int(production_days or 0))
-    skip = _tenant_non_delivery_set(tenant_settings)
-
-    candidate = today
-    counted = 0
-    # Tell framover, hopp over non-delivery
-    while counted < needed:
-        candidate = candidate + timedelta(days=1)
-        if candidate.weekday() in skip:
+    for offset in range(1, 22):
+        d = today + timedelta(days=offset)
+        co = cutoff_for_delivery(d, tenant_settings)
+        if co is None:
             continue
-        counted += 1
-    return candidate
+        if effective_now < co:
+            return d
+    # Fallback: today + 14 dager
+    return today + timedelta(days=14)
