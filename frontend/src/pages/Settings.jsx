@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Bell, Clock, Truck, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon, Download, UserPlus, Trash2, Mail, X as XIcon, Building2 } from 'lucide-react';
+import { Save, Bell, Clock, Database, Shield, RefreshCw, CheckCircle, AlertCircle, Users, Package, Calendar, PlayCircle, Lock, Image as ImageIcon, Download, UserPlus, Trash2, Mail, X as XIcon, Building2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import TwoFactorCard from '../components/TwoFactorCard';
 
@@ -1137,34 +1137,6 @@ export default function Settings() {
             <div>
               <h2 className="font-semibold text-gray-900">Bestillingsfrister</h2>
               <p className="text-sm text-gray-500">Konfigurer tidsfrister for bestillinger</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Delivery Settings */}
-        <div className="card">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-              <Truck className="w-5 h-5 text-green-600" />
-            </div>
-            <div>
-              <h2 className="font-semibold text-gray-900">Leveringsinnstillinger</h2>
-              <p className="text-sm text-gray-500">Konfigurer leveringsruter og tider</p>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Standard leveringstid</label>
-              <input type="time" defaultValue="07:00" className="input" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Leveringsområde</label>
-              <select className="input">
-                <option>Numedal (Lampeland, Flesberg, Rollag)</option>
-                <option>Kongsberg</option>
-                <option>Hele regionen</option>
-              </select>
             </div>
           </div>
         </div>
