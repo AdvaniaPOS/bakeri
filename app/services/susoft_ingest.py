@@ -236,7 +236,10 @@ def ingest_susoft_orders_for_tenant(
 
             # Velg fulfillment-tid
             fulfill_dt, fulfill_kind = pick_susoft_fulfillment(row)
-            order_dt = parse_susoft_datetime(row.get("orderDate"))
+            # SuSoft bruker `orderDateTime` (ikke `orderDate`); behold fallback for bakoverkompat.
+            order_dt = parse_susoft_datetime(
+                row.get("orderDateTime") or row.get("orderDate")
+            )
             pickup_dt = parse_susoft_datetime(row.get("pickupDate"))
             delivery_dt = parse_susoft_datetime(row.get("deliveryDate"))
 
