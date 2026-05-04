@@ -108,6 +108,12 @@ class CustomerBase(BaseModel):
             "Sett True for hoteller, sykehus, sykehjem og lignende."
         ),
     )
+    restrict_to_favorites: bool = Field(
+        default=False,
+        description=(
+            "Hvis True kan kunden i portalen kun bestille produkter som finnes i favorittlisten."
+        ),
+    )
     is_active: bool = True
     parent_customer_id: Optional[int] = Field(
         default=None,
@@ -136,6 +142,7 @@ class CustomerUpdate(BaseModel):
     delivery_instructions: Optional[str] = None
     order_lead_days: Optional[int] = Field(None, ge=7, le=84)
     delivers_on_holidays: Optional[bool] = None
+    restrict_to_favorites: Optional[bool] = None
     is_active: Optional[bool] = None
     parent_customer_id: Optional[int] = None
 

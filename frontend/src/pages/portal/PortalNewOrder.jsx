@@ -31,6 +31,8 @@ export default function PortalNewOrder() {
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [products, setProducts] = useState([]);
+  const [restrictToFavorites, setRestrictToFavorites] = useState(false);
+  const [showAllProducts, setShowAllProducts] = useState(false);
   const [search, setSearch] = useState('');
   const [quantities, setQuantities] = useState({}); // product_id -> qty
   const [loadingProducts, setLoadingProducts] = useState(false);
@@ -44,27 +46,48 @@ export default function PortalNewOrder() {
     }
   }, [me, outletId]);
 
-  // Last produkter når outlet endres
+  // Last produkter + favorittstatus når outlet endres
   useEffect(() => {
     if (!outletId) return;
     const token = localStorage.getItem('access_token');
     setLoadingProducts(true);
-    fetch(`${API_BASE}/portal/products?customer_id=${outletId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() : [])
-      .then(data => setProducts(data || []))
-      .catch(() => setProducts([]))
+    Promise.all([
+      fetch(`${API_BASE}/portal/products?customer_id=${outletId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(r => r.ok ? r.json() : []),
+      fetch(`${API_BASE}/portal/restrictions?customer_id=${outletId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(r => r.ok ? r.json() : { restrict_to_favorites: false }),
+    ])
+      .then(([prods, restr]) => {
+        setProducts(prods || []);
+        setRestrictToFavorites(!!restr?.restrict_to_favorites);
+        setShowAllProducts(false);
+      })
+      .catch(() => { setProducts([]); setRestrictToFavorites(false); })
       .finally(() => setLoadingProducts(false));
   }, [outletId]);
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return products;
-    const s = search.toLowerCase();
-    return products.filter(p =>
-      p.name.toLowerCase().includes(s) || (p.sku || '').toLowerCase().includes(s)
-    );
-  }, [products, search]);
+    // Hvis kunden er begrenset til favoritter: vis kun favoritter (alltid)
+    // Ellers: vis favoritter øverst, og resten under hvis showAllProducts er på
+    const s = search.trim().toLowerCase();
+    const matchesSearch = (p) => !s ||
+      p.name.toLowerCase().includes(s) ||
+      (p.sku || '').toLowerCase().includes(s);
+
+    if (restrictToFavorites) {
+      return products.filter(p => p.is_favorite && matchesSearch(p));
+    }
+    if (s) {
+      // Søk overstyrer favoritt-filter slik at man finner det man leter etter
+      return products.filter(matchesSearch);
+    }
+    if (showAllProducts) return products;
+    // Default: kun favoritter
+    const favs = products.filter(p => p.is_favorite);
+    return favs.length > 0 ? favs : products;
+  }, [products, search, restrictToFavorites, showAllProducts]);
 
   const totalLines = Object.values(quantities).filter(q => q > 0).length;
   const totalAmount = useMemo(() => {
@@ -207,13 +230,29 @@ export default function PortalNewOrder() {
       </div>
 
       <div className="bg-white border border-amber-200 rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-amber-100 flex items-center gap-3">
-          <h2 className="font-semibold text-amber-900">Produkter</h2>
+        <div className="px-4 py-3 border-b border-amber-100 flex flex-wrap items-center gap-3">
+          <h2 className="font-semibold text-amber-900">
+            {restrictToFavorites ? 'Favoritter' : (showAllProducts || search.trim() ? 'Alle produkter' : 'Mine favoritter')}
+          </h2>
+          {!restrictToFavorites && !search.trim() && (
+            <button
+              type="button"
+              onClick={() => setShowAllProducts(v => !v)}
+              className="text-xs px-2 py-1 rounded border border-amber-300 text-amber-800 hover:bg-amber-100"
+            >
+              {showAllProducts ? 'Vis kun favoritter' : 'Vis alle produkter'}
+            </button>
+          )}
+          {restrictToFavorites && (
+            <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800">
+              Du kan kun bestille fra favorittlisten din
+            </span>
+          )}
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Søk produkt eller SKU…"
+            placeholder={restrictToFavorites ? 'Søk i favoritter…' : 'Søk produkt eller SKU…'}
             className="ml-auto border border-gray-300 rounded-md px-3 py-1.5 text-sm w-64"
           />
         </div>
@@ -234,7 +273,10 @@ export default function PortalNewOrder() {
                 {filtered.map(p => (
                   <tr key={p.id} className="border-t border-amber-100 hover:bg-amber-50">
                     <td className="px-3 py-2">
-                      <div className="font-medium">{p.name}</div>
+                      <div className="font-medium">
+                        {p.is_favorite && <span className="text-amber-500 mr-1" title="Favoritt">★</span>}
+                        {p.name}
+                      </div>
                       {p.sku && <div className="text-xs text-gray-500">{p.sku}</div>}
                     </td>
                     <td className="px-3 py-2">{p.unit}</td>

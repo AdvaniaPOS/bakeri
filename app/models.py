@@ -326,6 +326,13 @@ class Customer(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
         )
     )
 
+    # Portal: begrens kunden til kun å bestille fra sin favorittliste.
+    # Hvis False (default) kan kunden også søke opp og bestille andre varer.
+    restrict_to_favorites: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false",
+        comment="Hvis True kan portal-kunden kun bestille produkter som finnes i favorittlisten."
+    )
+
     # Customer state
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
@@ -357,6 +364,10 @@ class Customer(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     )
     custom_prices: Mapped[List["CustomerProductPrice"]] = relationship(
         back_populates="customer", cascade="all, delete-orphan"
+    )
+    favorite_products: Mapped[List["CustomerFavoriteProduct"]] = relationship(
+        back_populates="customer", cascade="all, delete-orphan",
+        order_by="CustomerFavoriteProduct.sort_order"
     )
     master_templates: Mapped[List["MasterTemplate"]] = relationship(
         back_populates="customer", cascade="all, delete-orphan"
@@ -462,6 +473,9 @@ class Product(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     custom_prices: Mapped[List["CustomerProductPrice"]] = relationship(
         back_populates="product", cascade="all, delete-orphan"
     )
+    favorited_by: Mapped[List["CustomerFavoriteProduct"]] = relationship(
+        back_populates="product", cascade="all, delete-orphan"
+    )
     
     __table_args__ = (
         # SKU and SuSoft ID unique within tenant
@@ -541,6 +555,45 @@ class CustomerProductPrice(Base, TimestampMixin, TenantMixin):
         # Indeks for å finne pris-perioder som dekker en gitt dato (effective_to_date != NULL)
         Index("ix_customer_product_price_history",
               "customer_id", "product_id", "effective_from_date", "effective_to_date"),
+    )
+
+
+# =============================================================================
+# CUSTOMER FAVORITE PRODUCT - Kundens kuraterte favorittliste i portalen
+# =============================================================================
+
+class CustomerFavoriteProduct(Base, TimestampMixin, TenantMixin):
+    """
+    Kuratert favorittliste pr. kunde. Vises øverst i portalens bestillingsside.
+
+    Hvis Customer.restrict_to_favorites = True, kan kunden kun bestille
+    produkter som finnes i denne listen. Spesialpriser pr. kunde-vare lagres
+    fortsatt i CustomerProductPrice (favorittlisten styrer kun hva som vises).
+    """
+    __tablename__ = "customer_favorite_products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    customer_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0",
+        comment="Lavere tall vises først i portalen.",
+    )
+
+    # Relationships
+    customer: Mapped["Customer"] = relationship(back_populates="favorite_products")
+    product: Mapped["Product"] = relationship(back_populates="favorited_by")
+
+    __table_args__ = (
+        UniqueConstraint("customer_id", "product_id", name="uq_customer_favorite_product"),
+        Index("ix_customer_favorite_sort", "customer_id", "sort_order"),
     )
 
 

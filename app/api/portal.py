@@ -27,6 +27,7 @@ from ..auth_models import User, UserRole
 from ..models import (
     Customer, Product, Order, OrderLine,
     OrderStatus, SyncStatus, MasterTemplate, AdminAlert,
+    CustomerFavoriteProduct,
 )
 from ..schemas import OrderResponse
 from .pricing import get_effective_price
@@ -73,6 +74,12 @@ class PortalProduct(BaseModel):
     unit_price: Decimal  # ferdig prisberegnet for denne kunden
     vat_rate: Decimal
     description: Optional[str] = None
+    is_favorite: bool = False
+
+
+class PortalRestrictionInfo(BaseModel):
+    customer_id: int
+    restrict_to_favorites: bool
 
 
 class PortalOrderLineCreate(BaseModel):
@@ -137,6 +144,38 @@ def get_accessible_customer_ids(db: Session, user: User) -> List[int]:
     return ids
 
 
+def _get_favorite_owner_id(db: Session, user: User, customer_id: int) -> int:
+    """
+    Returner customer_id som FAVORITT-listen og restrict-flagget skal hentes fra.
+
+    Et utsalg arver hovedkundens favorittliste/innstilling. Hvis customer_id
+    er en hovedkunde, returneres den selv.
+    """
+    cust = db.get(Customer, customer_id)
+    if not cust or cust.tenant_id != user.tenant_id:
+        return customer_id
+    if cust.parent_customer_id is not None:
+        return cust.parent_customer_id
+    return customer_id
+
+
+def _is_restricted_to_favorites(db: Session, user: User, customer_id: int) -> bool:
+    owner_id = _get_favorite_owner_id(db, user, customer_id)
+    cust = db.get(Customer, owner_id)
+    return bool(cust and cust.restrict_to_favorites)
+
+
+def _favorite_product_ids(db: Session, user: User, customer_id: int) -> set[int]:
+    owner_id = _get_favorite_owner_id(db, user, customer_id)
+    rows = db.execute(
+        select(CustomerFavoriteProduct.product_id).where(
+            CustomerFavoriteProduct.tenant_id == user.tenant_id,
+            CustomerFavoriteProduct.customer_id == owner_id,
+        )
+    ).scalars().all()
+    return set(rows)
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -180,16 +219,89 @@ def get_me(
     )
 
 
+@router.get("/favorites", response_model=List[PortalProduct])
+def list_portal_favorites(
+    customer_id: int,
+    user: User = Depends(get_portal_user),
+    db: Session = Depends(get_db),
+):
+    """Lister favoritter for valgt utsalg, med effektiv pris.
+
+    Favoritter arves fra hovedkunden hvis kunden er et utsalg.
+    """
+    allowed = get_accessible_customer_ids(db, user)
+    if customer_id not in allowed:
+        raise HTTPException(status_code=403, detail="Ingen tilgang til dette utsalget")
+
+    fav_owner_id = _get_favorite_owner_id(db, user, customer_id)
+
+    favs = db.execute(
+        select(CustomerFavoriteProduct)
+        .where(
+            CustomerFavoriteProduct.tenant_id == user.tenant_id,
+            CustomerFavoriteProduct.customer_id == fav_owner_id,
+        )
+        .options(selectinload(CustomerFavoriteProduct.product))
+        .order_by(CustomerFavoriteProduct.sort_order.asc(), CustomerFavoriteProduct.id.asc())
+    ).scalars().all()
+
+    out: List[PortalProduct] = []
+    today = today_oslo()
+    for f in favs:
+        p = f.product
+        if not p or not p.is_active or p.is_deleted:
+            continue
+        try:
+            price, _, _ = get_effective_price(db, customer_id, p.id, today, tenant_id=user.tenant_id)
+        except Exception:
+            price = p.default_price
+        out.append(PortalProduct(
+            id=p.id, name=p.name, sku=p.sku, unit=p.unit,
+            unit_price=price, vat_rate=p.vat_rate,
+            description=p.description,
+            is_favorite=True,
+        ))
+    return out
+
+
+@router.get("/restrictions", response_model=PortalRestrictionInfo)
+def get_portal_restrictions(
+    customer_id: int,
+    user: User = Depends(get_portal_user),
+    db: Session = Depends(get_db),
+):
+    """Returner om utsalget er begrenset til kun å bestille fra favorittlisten."""
+    allowed = get_accessible_customer_ids(db, user)
+    if customer_id not in allowed:
+        raise HTTPException(status_code=403, detail="Ingen tilgang til dette utsalget")
+    return PortalRestrictionInfo(
+        customer_id=customer_id,
+        restrict_to_favorites=_is_restricted_to_favorites(db, user, customer_id),
+    )
+
+
 @router.get("/products", response_model=List[PortalProduct])
 def list_products(
     customer_id: int,
     user: User = Depends(get_portal_user),
     db: Session = Depends(get_db),
 ):
-    """Lister aktive produkter med effektiv pris for valgt utsalg."""
+    """Lister aktive produkter med effektiv pris for valgt utsalg.
+
+    Markerer hvilke som er i kundens favorittliste (is_favorite=True).
+    """
     allowed = get_accessible_customer_ids(db, user)
     if customer_id not in allowed:
         raise HTTPException(status_code=403, detail="Ingen tilgang til dette utsalget")
+
+    # Favorittlisten kommer fra hovedkunden hvis denne kunden er et utsalg
+    fav_customer_id = _get_favorite_owner_id(db, user, customer_id)
+    fav_product_ids = set(db.execute(
+        select(CustomerFavoriteProduct.product_id).where(
+            CustomerFavoriteProduct.tenant_id == user.tenant_id,
+            CustomerFavoriteProduct.customer_id == fav_customer_id,
+        )
+    ).scalars().all())
 
     products = db.execute(
         select(Product).where(
@@ -210,6 +322,7 @@ def list_products(
             id=p.id, name=p.name, sku=p.sku, unit=p.unit,
             unit_price=price, vat_rate=p.vat_rate,
             description=p.description,
+            is_favorite=p.id in fav_product_ids,
         ))
     return out
 
@@ -274,6 +387,19 @@ def create_portal_order(
     customer = db.get(Customer, data.customer_id)
     if not customer or customer.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="Utsalg ikke funnet")
+
+    # Håndhev begrensning til favorittliste hvis satt på (hoved-)kunden
+    if _is_restricted_to_favorites(db, user, data.customer_id):
+        allowed_product_ids = _favorite_product_ids(db, user, data.customer_id)
+        invalid = [l.product_id for l in data.lines if l.product_id not in allowed_product_ids]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Bestillingen inneholder produkter som ikke er i favorittlisten din. "
+                    f"Ikke-tillatte produkt-IDer: {invalid}. Ta kontakt med bakeriet for å bestille andre varer."
+                ),
+            )
 
     # Sjekk cutoff: en ordre for i morgen kan ikke opprettes etter 15:00 i dag
     if is_past_cutoff(data.delivery_date):

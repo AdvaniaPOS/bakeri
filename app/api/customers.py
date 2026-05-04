@@ -2,6 +2,7 @@
 Customer API endpoints. All endpoints are tenant-scoped.
 """
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,6 +19,7 @@ from ..schemas import (
     CustomerListResponse, DeleteRequest
 )
 from ..tenant_scope import get_or_404, cascade_soft_delete_customer
+from ..time_utils import today_oslo
 
 router = APIRouter(prefix="/customers", tags=["Customers"])
 
@@ -584,3 +586,290 @@ async def reset_portal_user_password(
     return PortalPasswordResetResponse(
         user_id=user.id, email=user.email, new_password=new_password,
     )
+
+
+# =============================================================================
+# Favorittliste pr. kunde (vises i portalen)
+# =============================================================================
+
+class FavoriteItem(BaseModel):
+    """Én favoritt-rad med produktinfo og effektiv pris for kunden."""
+    id: int  # CustomerFavoriteProduct.id
+    product_id: int
+    sku: Optional[str] = None
+    name: str
+    unit: Optional[str] = None
+    vat_rate: Decimal
+    default_price: Decimal
+    custom_price: Optional[Decimal] = None  # spesialpris satt for denne kunden (effektiv i dag)
+    effective_price: Decimal  # custom_price hvis satt, ellers default_price
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class FavoriteCreate(BaseModel):
+    product_id: int
+    custom_price: Optional[Decimal] = Field(None, ge=0, description="Spesialpris i NOK. Tomt = bruk standardpris.")
+    sort_order: Optional[int] = None
+
+
+class FavoriteUpdate(BaseModel):
+    custom_price: Optional[Decimal] = Field(None, ge=0)
+    clear_custom_price: bool = False
+    sort_order: Optional[int] = None
+
+
+def _set_customer_price(
+    db: Session, tenant_id: int, customer_id: int, product_id: int,
+    new_price: Optional[Decimal], user_id: Optional[int] = None,
+) -> None:
+    """
+    Upsert effektiv spesialpris for (customer, product). Hvis new_price er None,
+    avsluttes eventuell aktiv pris (ingen historikk slettes).
+
+    Bruker effective_from_date = today_oslo() for ny pris og setter
+    effective_to_date = today - 1 dag på forrige aktive pris.
+    """
+    from ..models import CustomerProductPrice
+    from datetime import date as _date, timedelta as _td
+
+    today = today_oslo()
+
+    # Hent aktiv pris i dag (om noen)
+    active = db.execute(
+        select(CustomerProductPrice).where(
+            CustomerProductPrice.tenant_id == tenant_id,
+            CustomerProductPrice.customer_id == customer_id,
+            CustomerProductPrice.product_id == product_id,
+            CustomerProductPrice.effective_from_date <= today,
+        ).where(
+            (CustomerProductPrice.effective_to_date.is_(None)) |
+            (CustomerProductPrice.effective_to_date >= today)
+        ).order_by(CustomerProductPrice.effective_from_date.desc()).limit(1)
+    ).scalar_one_or_none()
+
+    if new_price is None:
+        # Avslutt aktiv pris i dag
+        if active and (active.effective_to_date is None or active.effective_to_date >= today):
+            active.effective_to_date = today - _td(days=1)
+        return
+
+    # Hvis det allerede finnes en aktiv pris med samme verdi: ingenting å gjøre
+    if active and active.price == new_price:
+        return
+
+    # Avslutt forrige aktive (hvis noen) i går
+    if active and (active.effective_to_date is None or active.effective_to_date >= today):
+        active.effective_to_date = today - _td(days=1)
+
+    # Sjekk om det finnes en oppføring fra i dag — overskriv den
+    same_day = db.execute(
+        select(CustomerProductPrice).where(
+            CustomerProductPrice.tenant_id == tenant_id,
+            CustomerProductPrice.customer_id == customer_id,
+            CustomerProductPrice.product_id == product_id,
+            CustomerProductPrice.effective_from_date == today,
+        )
+    ).scalar_one_or_none()
+    if same_day:
+        same_day.price = new_price
+        same_day.effective_to_date = None
+        return
+
+    db.add(CustomerProductPrice(
+        tenant_id=tenant_id,
+        customer_id=customer_id,
+        product_id=product_id,
+        price=new_price,
+        effective_from_date=today,
+        effective_to_date=None,
+        created_by_user_id=user_id,
+    ))
+
+
+def _build_favorite_item(db: Session, tenant_id: int, fav, today) -> FavoriteItem:
+    from .pricing import get_effective_price as _gep
+    p = fav.product
+    try:
+        eff_price, is_custom, _pid = _gep(db, fav.customer_id, p.id, today, tenant_id=tenant_id)
+    except Exception:
+        eff_price = p.default_price
+        is_custom = False
+    return FavoriteItem(
+        id=fav.id,
+        product_id=p.id,
+        sku=p.sku,
+        name=p.name,
+        unit=p.unit,
+        vat_rate=p.vat_rate,
+        default_price=p.default_price,
+        custom_price=eff_price if is_custom else None,
+        effective_price=eff_price,
+        is_active=p.is_active and not p.is_deleted,
+        sort_order=fav.sort_order,
+    )
+
+
+@router.get("/{customer_id}/favorites", response_model=List[FavoriteItem])
+async def list_favorites(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    from ..models import CustomerFavoriteProduct
+    from ..time_utils import today_oslo as _today
+
+    get_or_404(db, Customer, customer_id, tenant.id, "Customer not found")
+
+    favs = db.execute(
+        select(CustomerFavoriteProduct)
+        .where(
+            CustomerFavoriteProduct.tenant_id == tenant.id,
+            CustomerFavoriteProduct.customer_id == customer_id,
+        )
+        .options(selectinload(CustomerFavoriteProduct.product))
+        .order_by(CustomerFavoriteProduct.sort_order.asc(), CustomerFavoriteProduct.id.asc())
+    ).scalars().all()
+
+    today = _today()
+    return [_build_favorite_item(db, tenant.id, f, today) for f in favs if f.product is not None]
+
+
+@router.post("/{customer_id}/favorites", response_model=FavoriteItem, status_code=status.HTTP_201_CREATED)
+async def add_favorite(
+    customer_id: int,
+    data: FavoriteCreate,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    from ..models import CustomerFavoriteProduct, Product as _Product
+    from ..time_utils import today_oslo as _today
+
+    customer = get_or_404(db, Customer, customer_id, tenant.id, "Customer not found")
+    product = get_or_404(db, _Product, data.product_id, tenant.id, "Produkt ikke funnet")
+
+    existing = db.execute(
+        select(CustomerFavoriteProduct).where(
+            CustomerFavoriteProduct.tenant_id == tenant.id,
+            CustomerFavoriteProduct.customer_id == customer.id,
+            CustomerFavoriteProduct.product_id == product.id,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="Produktet er allerede i favorittlisten")
+
+    if data.sort_order is None:
+        max_sort = db.execute(
+            select(func.coalesce(func.max(CustomerFavoriteProduct.sort_order), -1))
+            .where(
+                CustomerFavoriteProduct.tenant_id == tenant.id,
+                CustomerFavoriteProduct.customer_id == customer.id,
+            )
+        ).scalar_one()
+        sort_order = int(max_sort) + 1
+    else:
+        sort_order = data.sort_order
+
+    fav = CustomerFavoriteProduct(
+        tenant_id=tenant.id,
+        customer_id=customer.id,
+        product_id=product.id,
+        sort_order=sort_order,
+    )
+    db.add(fav)
+    db.flush()
+
+    if data.custom_price is not None:
+        _set_customer_price(db, tenant.id, customer.id, product.id, data.custom_price)
+
+    db.add(AuditLog(
+        tenant_id=tenant.id,
+        entity_type="customer_favorite",
+        entity_id=fav.id,
+        action=AuditAction.CREATE,
+        new_values={
+            "customer_id": customer.id, "product_id": product.id,
+            "custom_price": str(data.custom_price) if data.custom_price is not None else None,
+        },
+    ))
+    db.commit()
+    db.refresh(fav)
+
+    return _build_favorite_item(db, tenant.id, fav, _today())
+
+
+@router.patch("/{customer_id}/favorites/{favorite_id}", response_model=FavoriteItem)
+async def update_favorite(
+    customer_id: int,
+    favorite_id: int,
+    data: FavoriteUpdate,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    from ..models import CustomerFavoriteProduct
+    from ..time_utils import today_oslo as _today
+
+    fav = db.execute(
+        select(CustomerFavoriteProduct).where(
+            CustomerFavoriteProduct.id == favorite_id,
+            CustomerFavoriteProduct.tenant_id == tenant.id,
+            CustomerFavoriteProduct.customer_id == customer_id,
+        ).options(selectinload(CustomerFavoriteProduct.product))
+    ).scalar_one_or_none()
+    if not fav:
+        raise HTTPException(status_code=404, detail="Favoritt ikke funnet")
+
+    if data.sort_order is not None:
+        fav.sort_order = data.sort_order
+
+    if data.clear_custom_price:
+        _set_customer_price(db, tenant.id, customer_id, fav.product_id, None)
+    elif data.custom_price is not None:
+        _set_customer_price(db, tenant.id, customer_id, fav.product_id, data.custom_price)
+
+    db.add(AuditLog(
+        tenant_id=tenant.id,
+        entity_type="customer_favorite",
+        entity_id=fav.id,
+        action=AuditAction.UPDATE,
+        new_values={
+            "sort_order": data.sort_order,
+            "custom_price": str(data.custom_price) if data.custom_price is not None else None,
+            "clear_custom_price": data.clear_custom_price,
+        },
+    ))
+    db.commit()
+    db.refresh(fav)
+
+    return _build_favorite_item(db, tenant.id, fav, _today())
+
+
+@router.delete("/{customer_id}/favorites/{favorite_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_favorite(
+    customer_id: int,
+    favorite_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    from ..models import CustomerFavoriteProduct
+
+    fav = db.execute(
+        select(CustomerFavoriteProduct).where(
+            CustomerFavoriteProduct.id == favorite_id,
+            CustomerFavoriteProduct.tenant_id == tenant.id,
+            CustomerFavoriteProduct.customer_id == customer_id,
+        )
+    ).scalar_one_or_none()
+    if not fav:
+        raise HTTPException(status_code=404, detail="Favoritt ikke funnet")
+
+    db.delete(fav)
+    db.add(AuditLog(
+        tenant_id=tenant.id,
+        entity_type="customer_favorite",
+        entity_id=favorite_id,
+        action=AuditAction.DELETE,
+        old_values={"customer_id": customer_id, "product_id": fav.product_id},
+    ))
+    db.commit()
+
