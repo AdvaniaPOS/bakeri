@@ -24,6 +24,7 @@ from typing import Optional
 from sqlalchemy import select
 
 from app.database import SessionLocal
+from app import auth_models  # noqa: F401  -- registrer Tenant-modellen for FK-resolusjon
 from app.models import Order
 
 
