@@ -1052,7 +1052,7 @@ async def create_tenant(
         org_number=payload.org_number,
         email=payload.email,
         is_active=True,
-        subscription_plan=SubscriptionPlan.STARTER,
+        subscription_plan=SubscriptionPlan.FREE_TRIAL,
         subscription_status=SubscriptionStatus.TRIAL,
         susoft_api_url=payload.susoft_api_url,
         susoft_login=payload.susoft_login,
