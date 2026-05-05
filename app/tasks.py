@@ -70,21 +70,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_from_susoft",
         "schedule": crontab(hour=1, minute=0),
     },
-    # POLL: hent NYE ordrer FRA SuSoft hver 5. minutt (motsatt vei av push).
-    "ingest-orders-from-susoft": {
-        "task": "app.tasks.ingest_susoft_orders",
-        "schedule": crontab(minute="*/5"),
-    },
-    # POLL: hent CART-er fra SuSoft admin-API ("API 2") hver 5. minutt.
-    "ingest-admin-carts-from-susoft": {
-        "task": "app.tasks.ingest_susoft_admin_carts",
-        "schedule": crontab(minute="*/5"),
-    },
-    # PUSH-RETRY: prov igjen mislykkede cart-pushes hvert 2. minutt (to-veis sync).
-    "retry-pending-cart-pushes": {
-        "task": "app.tasks.retry_pending_cart_pushes",
-        "schedule": crontab(minute="*/2"),
-    },
+    # NB: Henting av ordrer/carts FRA SuSoft er fjernet — vi sender kun
+    # ordrer den andre veien (push). Tidligere `ingest-orders-from-susoft`,
+    # `ingest-admin-carts-from-susoft` og `retry-pending-cart-pushes` er
+    # fjernet sammen med ingest-tasks og cart-import-flyten.
     # HEALTH-CHECK: stabil test mot SuSoft hvert 2. minutt.
     # Oppdaterer tenant.susoft_connection_status. Logger automatisk gjenoppretting.
     "susoft-health-check": {
@@ -463,48 +452,6 @@ def full_sync_from_susoft():
         db.close()
 
 
-@celery_app.task(name="app.tasks.ingest_susoft_orders")
-def ingest_susoft_orders(days_back: int = 30):
-    """
-    Pull NYE ordrer FRA SuSoft for alle tenants (polling).
-
-    Kjøres hvert 5. minutt. Dedupliserer mot `orders.susoft_uuid`.
-    Ordrer uten lokal kunde-match opprettes mot 'Ukjent kunde'.
-    `type=CART` opprettes som DRAFT.
-    """
-    from .services.susoft_ingest import ingest_susoft_orders_all_tenants
-    return ingest_susoft_orders_all_tenants(days_back=days_back)
-
-
-@celery_app.task(name="app.tasks.ingest_susoft_admin_carts")
-def ingest_susoft_admin_carts(days_back: int = 30):
-    """
-    Pull aPOS CART-er FRA SuSoft admin-API ("API 2") for alle tenants.
-
-    Kjøres hvert 5. minutt. Bruker tenant.susoft_admin_* kredentialer.
-    Dedupliserer mot `orders.susoft_uuid` (samme nøkkel som /order/list).
-    """
-    from .services.susoft_ingest import ingest_susoft_admin_carts_all_tenants
-    return ingest_susoft_admin_carts_all_tenants(days_back=days_back)
-
-
-@celery_app.task(name="app.tasks.retry_pending_cart_pushes")
-def retry_pending_cart_pushes(limit: int = 50):
-    """
-    Retry cart-import-ordrer der inline-PUT mot SuSoft feilet.
-
-    Kjøres hvert 2. minutt. Plukker opp ordrer med susoft_pending_push=True
-    og prøver å pushe dem på nytt. Lykkes pushen, clears flagget. Hvis ikke,
-    blir feilen lagret i susoft_last_push_error og vi prøver igjen neste runde.
-    """
-    from .services.susoft_push import retry_pending_pushes
-    db = SessionLocal()
-    try:
-        return retry_pending_pushes(db, limit=limit)
-    finally:
-        db.close()
-
-
 @celery_app.task(name="app.tasks.susoft_health_check")
 def susoft_health_check():
     """
@@ -545,17 +492,13 @@ def susoft_health_check():
                 )
                 recovered_any = True
 
-        # Hvis noen ble gjenopprettet, kjør pending-handlinger med en gang
+        # Hvis noen ble gjenopprettet, kjør pending push-handlinger med en gang
         # så ingen blir værende i kø før neste vanlige tikk.
         if recovered_any:
             try:
                 sync_pending_orders.delay()
             except Exception as e:
                 logger.warning("Could not enqueue sync_pending_orders after recovery: %s", e)
-            try:
-                ingest_susoft_orders.delay()
-            except Exception as e:
-                logger.warning("Could not enqueue ingest_susoft_orders after recovery: %s", e)
 
         return {"results": results, "recovered": recovered_any}
     finally:
