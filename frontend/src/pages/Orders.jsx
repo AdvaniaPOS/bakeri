@@ -940,6 +940,10 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
               <p className="text-xs text-gray-500">
                 Status: {order.status} · Sync: {order.sync_status}
                 {order.susoft_order_id ? ` · SuSoft #${order.susoft_order_id}` : ''}
+                {order.susoft_order_no ? ` · OrderNo ${order.susoft_order_no}` : ''}
+                {order.susoft_uuid ? (
+                  <> · UUID <span className="font-mono select-all">{order.susoft_uuid}</span></>
+                ) : null}
               </p>
             )}
           </div>

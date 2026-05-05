@@ -416,12 +416,15 @@ class OrderResponse(OrderBase, TimestampSchema):
     order_no_display: Optional[str] = None
     status: OrderStatusEnum
     susoft_order_id: Optional[str] = None
+    susoft_uuid: Optional[str] = None
+    susoft_order_no: Optional[str] = None
     sync_status: SyncStatusEnum
     sync_error_message: Optional[str] = None
     last_sync_attempt: Optional[datetime] = None
 
     susoft_invoice_no: Optional[str] = None
     invoiced_at: Optional[datetime] = None
+    source: Optional[str] = None
     
     generated_from_template_id: Optional[int] = None
     is_adhoc_modified: bool = False
