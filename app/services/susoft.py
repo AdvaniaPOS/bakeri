@@ -1769,6 +1769,84 @@ class SuSoftService:
     # SYNC ORCHESTRATION
     # =========================================================================
 
+    def _refresh_local_totals_from_susoft(self, order: Order) -> bool:
+        """
+        Hent SuSoft sin versjon av ordren og oppdater lokale totalfelter
+        (`total_amount_excl_vat`, `total_vat`, `total_amount_incl_vat`).
+
+        SuSoft er autoritativ for MVA-beregning og prising etter at ordren
+        er sendt. Lokal data kan ha vært beregnet med feil MVA-sats hvis
+        produktet manglet `vatPercent` ved opprettelse — dette korrigerer det.
+
+        Endrer ikke ordrelinjer (de beholder lokal `unit_price` / `vat_rate`).
+        Returnerer True hvis totaler ble oppdatert, ellers False.
+        """
+        if not order.id:
+            return False
+        data: Optional[Dict[str, Any]] = None
+        try:
+            # Først: pushede ordre slås opp via alternativeId (= vår order.id)
+            data = self.get_order_by_alt_id(str(order.id))
+        except Exception as e:  # nosec - vi vil ikke at refresh-feil skal feile sync
+            logger.warning(
+                "Kunne ikke hente SuSoft-ordre %s for total-refresh (altId): %s",
+                order.id, e,
+            )
+            data = None
+
+        # Fallback for cart-importer (har bare susoft_uuid, ingen susoft_order_id):
+        # hent admin-cart-detalj via UUID. Cart-linjer bruker samme felt-navn
+        # (netTotal/vatAmount/total) som ordre-linjer.
+        if not data:
+            uuid = getattr(order, "susoft_uuid", None)
+            if uuid:
+                try:
+                    data = self.get_cart_detail(str(uuid))
+                except Exception as e:
+                    logger.warning(
+                        "Kunne ikke hente SuSoft-cart %s for total-refresh: %s",
+                        uuid, e,
+                    )
+                    data = None
+        if not isinstance(data, dict):
+            return False
+
+        lines = data.get("lines") or []
+        if not isinstance(lines, list) or not lines:
+            return False
+
+        from decimal import Decimal as _D
+
+        def _dec(v: Any) -> _D:
+            if v is None or v == "":
+                return _D("0")
+            try:
+                return _D(str(v))
+            except Exception:
+                return _D("0")
+
+        excl = _D("0")
+        vat = _D("0")
+        incl = _D("0")
+        for ln in lines:
+            if not isinstance(ln, dict):
+                continue
+            excl += _dec(ln.get("netTotal"))
+            vat += _dec(ln.get("vatAmount"))
+            incl += _dec(ln.get("total"))
+
+        if incl == 0 and excl == 0 and vat == 0:
+            return False
+
+        order.total_amount_excl_vat = excl
+        order.total_vat = vat
+        order.total_amount_incl_vat = incl
+        logger.info(
+            "Refreshed local totals from SuSoft for order %s: excl=%s vat=%s incl=%s",
+            order.id, excl, vat, incl,
+        )
+        return True
+
     def sync_single_order(self, order: Order) -> str:
         """
         Synk en enkelt ordre til SuSoft. Brukes av `sync_order` Celery-tasken
@@ -1790,6 +1868,10 @@ class SuSoftService:
             # Eksisterer allerede i SuSoft. SuSoft har ingen update-endepunkt,
             # så vi behandler dette som en no-op og markerer som synkronisert.
             order.sync_status = SyncStatus.SYNCED
+            # Re-pull totaler fra SuSoft slik at lokale summer alltid speiler
+            # SuSoft sin autoritative MVA-beregning (særlig viktig hvis lokal
+            # ordre ble lagret med feil/manglende vat_rate på produktet).
+            self._refresh_local_totals_from_susoft(order)
         else:
             # Ny ordre — opprett (idempotens-sjekk gjøres internt)
             susoft_id = self.create_order(order)
@@ -1797,6 +1879,10 @@ class SuSoftService:
             order.sync_status = SyncStatus.SYNCED
             if order.status == OrderStatus.CONFIRMED:
                 order.status = OrderStatus.READY_FOR_DELIVERY
+            # Hent SuSoft sin autoritative versjon av ordren og oppdater
+            # lokale totaler (ekskl/MVA/inkl). SuSoft kan ha overstyrt MVA-sats
+            # eller priser sammenlignet med våre lokale produktdata.
+            self._refresh_local_totals_from_susoft(order)
 
         order.last_sync_attempt = to_naive_utc(now_utc())
         order.sync_error_message = None
@@ -1859,6 +1945,8 @@ class SuSoftService:
                     order.sync_status = SyncStatus.SYNCED
                     if order.status == OrderStatus.CONFIRMED:
                         order.status = OrderStatus.READY_FOR_DELIVERY
+                    # Refresh local totals fra SuSoft sin autoritative versjon
+                    self._refresh_local_totals_from_susoft(order)
                     results["synced"] += 1
 
                 order.last_sync_attempt = now_naive

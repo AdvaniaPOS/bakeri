@@ -400,10 +400,21 @@ DEFAULT_ADMIN_CART_DAYS_BACK = 30
 
 
 def _line_qty(line: Dict[str, Any]) -> int:
-    """Cart-detalj-linjer bruker `qty`; ordre-linjer bruker `quantity`."""
-    raw = line.get("qty")
-    if raw is None:
-        raw = line.get("quantity")
+    """
+    Hent antall fra en SuSoft-linje.
+
+    Feltene varierer mellom endepunktene:
+      - cart-detalj (admin /cart/{id})        : `qty`
+      - cart-detalj (alternativ representasjon): `qtyOrdered` / `qtyDelivered`
+      - ordre-linjer (/order/list)            : `quantity`
+    """
+    raw = (
+        line.get("qty")
+        if line.get("qty") is not None
+        else line.get("qtyOrdered")
+        if line.get("qtyOrdered") is not None
+        else line.get("quantity")
+    )
     return int(_to_decimal(raw, "0"))
 
 
@@ -415,7 +426,12 @@ def _line_unit_price(line: Dict[str, Any], vat_rate: Optional[Decimal] = None) -
     (verifisert: `total = qty * price`). Vi bruker derfor `netTotal/qty`
     hvis tilgjengelig (mest presis), ellers `price / (1 + vat/100)`.
     """
-    qty = _to_decimal(line.get("qty") or line.get("quantity"), "0")
+    qty = _to_decimal(
+        line.get("qty")
+        or line.get("qtyOrdered")
+        or line.get("quantity"),
+        "0",
+    )
     net_total = line.get("netTotal")
     if net_total is not None and qty and qty != 0:
         return (_to_decimal(net_total, "0") / qty).quantize(Decimal("0.0001"))
