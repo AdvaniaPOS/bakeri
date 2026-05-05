@@ -191,6 +191,17 @@ async def list_orders(
     if to_date:
         base = base.where(Order.delivery_date <= to_date)
 
+    # Skjul SuSoft-cart-import-ordrer uten reell hente-/leveringsdato.
+    # Disse får `delivery_date = today` som fallback ved ingest, men er ikke
+    # klare for produksjon før kunden har valgt dato i SuSoft-kassa.
+    base = base.where(
+        or_(
+            Order.source != "susoft_cart_import",
+            Order.susoft_pickup_at.isnot(None),
+            Order.susoft_delivery_at.isnot(None),
+        )
+    )
+
     total = db.execute(select(func.count()).select_from(base.subquery())).scalar() or 0
 
     orders = db.execute(
