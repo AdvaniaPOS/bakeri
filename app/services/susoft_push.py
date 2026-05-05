@@ -82,19 +82,26 @@ def _line_dict_for_susoft(
     line_total_incl = round(line_total_excl + line_tax, 4)
 
     base: Dict[str, Any] = dict(template_line) if template_line else {}
+    pid = product.susoft_product_id or product.sku or str(product.id)
+    barcode = (
+        (template_line or {}).get("product", {}).get("barcode")
+        or product.susoft_product_id
+        or product.sku
+    )
     base.update({
         # SuSoft bruker BÅDE `line` og `lineNo` — begge må være unike per linje,
         # ellers returnerer PUT 404 ("Order not found"). Vi overstyrer alltid
         # template-verdiene siden samme produkt kan forekomme i flere lokale linjer.
         "line": line_no,
         "lineNo": line_no,
+        # SuSoft krever top-level `productId` og `vatPercent` på linjen — uten
+        # disse returnerer PUT 404 selv om nested `product`-blokken er komplett.
+        "productId": pid,
+        "barcode": barcode,
+        "vatPercent": vat_pct,
         "product": {
-            "id": product.susoft_product_id or product.sku or str(product.id),
-            "barcode": (
-                (template_line or {}).get("product", {}).get("barcode")
-                or product.susoft_product_id
-                or product.sku
-            ),
+            "id": pid,
+            "barcode": barcode,
         },
         "text": product.name,
         # SuSoft bruker `qtyOrdered` internt — `qty` alene blir ignorert ved PUT.
