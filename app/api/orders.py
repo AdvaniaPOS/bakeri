@@ -917,26 +917,12 @@ async def invoice_order(
         if order.source == "susoft_cart_import" and order.susoft_uuid:
             # Cart-import: ordren finnes som CART i SuSoft admin (med uuid),
             # men IKKE i den public ORDER-projeksjonen som /invoice leser fra.
-            # SuSoft har ingen "promote cart→order"-API, så vi må opprette
-            # en separat ORDER-projeksjon via POST /order. Cart'en blir
-            # liggende i admin (kan ryddes manuelt der).
-            from ..services.susoft_push import push_order_to_susoft
-            # Steg 1a: Push siste linjer/kunde til admin-cart (samme som
-            # "Send"-knappen). Dette holder cart'en synkronisert.
-            push_summary = push_order_to_susoft(
-                db, order, service=service, for_invoicing=True
-            )
-            db.commit()
-            if push_summary.get("status") == "failed":
-                raise SuSoftAPIError(
-                    f"Kunne ikke synkronisere endringer før fakturering: "
-                    f"{push_summary.get('error') or 'ukjent feil'}"
-                )
-            # Steg 1b: Opprett ORDER-projeksjon hvis ikke allerede gjort.
-            # `create_order` er idempotent på alternativeId=str(order.id):
-            # hvis SuSoft allerede har en ORDER med denne altId-en (fra
-            # tidligere forsøk), returnerer den eksisterende orderNo uten
-            # å opprette duplikat.
+            # SuSoft har ingen "promote cart→order"-API, OG admin-PUT
+            # returnerer 404 for disse cart-ene, så vi kan verken promotere
+            # eller pushe lokale endringer tilbake til CART-en. I stedet
+            # oppretter vi en parallell ORDER-projeksjon via POST /order
+            # basert på lokale linjer (som er kanonisk kilde uansett).
+            # Cart'en blir liggende orphan i admin (kan ryddes manuelt der).
             if not order.susoft_order_id:
                 susoft_id = service.create_order(order)
                 order.susoft_order_id = susoft_id
