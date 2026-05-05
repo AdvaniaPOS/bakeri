@@ -515,10 +515,19 @@ export default function Settings() {
     last_error: null,
     is_locked: true,
     can_edit: false,
+    // Admin-API ("API 2") - aPOS-CART-er
+    admin_api_url: '',
+    admin_login: '',
+    admin_shop_url_key: '',
+    admin_shop_id: null,
+    admin_has_password: false,
   });
   const [password, setPassword] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [savingConfig, setSavingConfig] = useState(false);
   const [configMessage, setConfigMessage] = useState(null);
+  const [adminConnectionStatus, setAdminConnectionStatus] = useState(null);
+  const [checkingAdminConnection, setCheckingAdminConnection] = useState(false);
 
   // Tenant settings (bakeri-defaults)
   const [tenantSettings, setTenantSettings] = useState({});
@@ -680,8 +689,12 @@ export default function Settings() {
       const payload = {
         login: config.login || null,
         shop_url_key: config.shop_url_key || null,
+        admin_login: config.admin_login || null,
+        admin_shop_url_key: config.admin_shop_url_key || null,
+        admin_shop_id: config.admin_shop_id === '' || config.admin_shop_id === null ? null : Number(config.admin_shop_id),
       };
       if (password) payload.password = password;
+      if (adminPassword) payload.admin_password = adminPassword;
       const resp = await authFetch('/api/v1/admin/susoft-config', {
         method: 'PUT',
         body: payload,
@@ -690,8 +703,10 @@ export default function Settings() {
       if (resp.ok) {
         setConfig(data);
         setPassword('');
+        setAdminPassword('');
         setConfigMessage({ success: true, message: 'Lagret' });
         setConnectionStatus(null);
+        setAdminConnectionStatus(null);
       } else {
         setConfigMessage({ success: false, message: data.detail || 'Kunne ikke lagre' });
       }
@@ -715,6 +730,19 @@ export default function Settings() {
       setConnectionStatus({ success: false, message: err.message });
     } finally {
       setCheckingConnection(false);
+    }
+  };
+
+  const checkAdminConnection = async () => {
+    setCheckingAdminConnection(true);
+    try {
+      const response = await authFetch('/api/v1/admin/test-admin-connection', { method: 'POST' });
+      const data = await response.json();
+      setAdminConnectionStatus(data);
+    } catch (err) {
+      setAdminConnectionStatus({ success: false, message: err.message });
+    } finally {
+      setCheckingAdminConnection(false);
     }
   };
 
@@ -866,6 +894,94 @@ export default function Settings() {
               >
                 {checkingConnection ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                 Test tilkobling
+              </button>
+            </div>
+          </div>
+
+          {/* Admin-API ("API 2") - aPOS-CART-er */}
+          <div className="mb-6 p-4 border border-purple-200 bg-purple-50 rounded-lg">
+            <div className="mb-3">
+              <h3 className="text-sm font-semibold text-purple-900">Admin-API (aPOS-CART-er)</h3>
+              <p className="text-xs text-purple-800 mt-1">
+                Brukes for &aring; hente CART-er som er opprettet i aPOS-kassen, slik at de kommer inn i ordresystemet automatisk.
+                Kan v&aelig;re samme bruker som over, eller en separat admin-bruker fra SuSoft.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Admin-login (brukernavn)</label>
+                <input
+                  type="text"
+                  value={config.admin_login || ''}
+                  onChange={e => setConfig(c => ({ ...c, admin_login: e.target.value }))}
+                  placeholder="admin@firma.no eller bruker"
+                  className="input"
+                  autoComplete="username"
+                  disabled={!config.can_edit}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Admin-passord {config.admin_has_password && <span className="text-xs text-gray-400">(lagret &mdash; la st&aring; tomt for &aring; beholde)</span>}
+                </label>
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={e => setAdminPassword(e.target.value)}
+                  placeholder={config.admin_has_password ? '••••••••••••' : 'Skriv admin-passord'}
+                  className="input"
+                  autoComplete="new-password"
+                  disabled={!config.can_edit}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Admin Shop Key (X-Shop-Url-Key)</label>
+                <input
+                  type="text"
+                  value={config.admin_shop_url_key || ''}
+                  onChange={e => setConfig(c => ({ ...c, admin_shop_url_key: e.target.value }))}
+                  placeholder="ofte samme som over"
+                  className="input"
+                  disabled={!config.can_edit}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Admin Shop ID (numerisk)</label>
+                <input
+                  type="number"
+                  value={config.admin_shop_id ?? ''}
+                  onChange={e => setConfig(c => ({ ...c, admin_shop_id: e.target.value }))}
+                  placeholder="f.eks. 1"
+                  className="input"
+                  disabled={!config.can_edit}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between p-3 bg-white rounded border">
+              <div className="flex items-center gap-2">
+                {adminConnectionStatus === null ? (
+                  <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                ) : adminConnectionStatus.success ? (
+                  <CheckCircle className="w-5 h-5 text-green-500" />
+                ) : (
+                  <AlertCircle className="w-5 h-5 text-red-500" />
+                )}
+                <span className={`text-sm ${adminConnectionStatus?.success ? 'text-green-600' : adminConnectionStatus === null ? 'text-gray-500' : 'text-red-600'}`}>
+                  {adminConnectionStatus === null
+                    ? 'Admin-tilkobling ikke testet'
+                    : adminConnectionStatus.success
+                      ? (adminConnectionStatus.message || 'Tilkoblet SuSoft admin-API')
+                      : adminConnectionStatus.message || 'Tilkobling feilet'}
+                </span>
+              </div>
+              <button
+                onClick={checkAdminConnection}
+                disabled={checkingAdminConnection || !config.admin_login || (!config.admin_has_password && !adminPassword)}
+                className="btn-secondary text-sm flex items-center gap-2"
+                title={!config.admin_login ? 'Sett admin-login forst og lagre' : ''}
+              >
+                {checkingAdminConnection ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                Test admin-tilkobling
               </button>
             </div>
           </div>

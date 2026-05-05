@@ -586,6 +586,50 @@ class SuSoftService:
             pass
         return ok
 
+    def test_admin_connection(self) -> tuple[bool, Optional[str]]:
+        """
+        Test connection mot SuSoft Admin-API ("API 2") for aPOS-CART-er.
+        Returnerer (success, error_message). Forsoker auth + et lett kall mot
+        /admin/order/list for aa verifisere at admin-credentials og shop_id
+        faktisk gir tilgang.
+        """
+        self._load_admin_config(force=True)
+        self._invalidate_admin_token()
+
+        if not self._admin_login or not self._admin_password:
+            return False, "Mangler admin-login eller admin-passord"
+
+        token = self._get_admin_token(force=True)
+        if not token:
+            return False, "Autentisering mot admin-API feilet (sjekk login/passord)"
+
+        # Lett verifisering: prov et kort /admin/order/list-kall.
+        # Hvis shop_id mangler vil dette feile - da returnerer vi en
+        # informativ melding i stedet for raw stack-trace.
+        if self._admin_shop_id is None:
+            # Auth fungerte, men shop_id mangler for produksjonsbruk.
+            return True, "Auth OK, men admin_shop_id mangler (kreves for /admin/order/list)"
+
+        try:
+            client = self._get_admin_client()
+            headers = {"Authorization": f"Bearer {token}"}
+            if self._admin_shop_key:
+                headers["X-Shop-Url-Key"] = self._admin_shop_key
+            # Kall med smal periode for aa minimere belastning.
+            from datetime import timedelta as _td
+            now = datetime.utcnow()
+            params = {
+                "fromDate": (now - _td(days=1)).strftime("%Y-%m-%dT00:00:00.000"),
+                "toDate": now.strftime("%Y-%m-%dT00:00:00.000"),
+                "shopId": self._admin_shop_id,
+            }
+            resp = client.get("/admin/order/list", headers=headers, params=params)
+            if resp.status_code == 200:
+                return True, None
+            return False, f"/admin/order/list returnerte HTTP {resp.status_code}: {resp.text[:200]}"
+        except Exception as e:
+            return False, f"Admin-API kall feilet: {e}"
+
     def _update_tenant_status(self, status: str, error: Optional[str]) -> None:
         if self.tenant_id is None:
             return
@@ -1002,12 +1046,6 @@ class SuSoftService:
             delay = min(delay * 2, 30.0)
             last_response = response
         return last_response  # type: ignore[return-value]
-
-    def test_admin_connection(self) -> bool:
-        """Test admin-API: prøv å autentisere. Returnerer True hvis vi får token."""
-        self._load_admin_config(force=True)
-        self._invalidate_admin_token()
-        return bool(self._get_admin_token(force=True))
 
     def list_admin_carts(
         self,

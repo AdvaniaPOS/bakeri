@@ -576,6 +576,33 @@ async def test_susoft_connection(
         }
 
 
+@router.get("/test-admin-connection")
+@router.post("/test-admin-connection")
+async def test_susoft_admin_connection(
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
+):
+    """
+    Test connection mot SuSoft admin-API ("API 2") for henting av aPOS-CART-er.
+    Krever at admin_login + admin_password er satt paa tenant.
+    """
+    from ..services.susoft import SuSoftService
+
+    try:
+        service = SuSoftService(db, tenant_id=tenant.id)
+        ok, err = service.test_admin_connection()
+        return {
+            "success": ok,
+            "message": err or ("Tilkoblet SuSoft admin-API" if ok else "Tilkobling feilet"),
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e),
+        }
+
+
 @router.post("/sync/customers")
 async def sync_customers_from_susoft(
     db: Session = Depends(get_db),
