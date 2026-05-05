@@ -269,14 +269,14 @@ export default function Layout() {
             <div className="flex items-center gap-2 min-w-0">
               <ShieldAlert className="w-4 h-4 flex-shrink-0" />
               <span className="truncate">
-                Support-okt: du er logget inn som <strong>{tenant?.name || 'kunde'}</strong>
+                Supportøkt: du er logget inn som <strong>{tenant?.name || 'kunde'}</strong>
               </span>
             </div>
             <button
               onClick={() => endImpersonation()}
               className="flex-shrink-0 bg-white text-amber-700 hover:bg-amber-50 px-3 py-1 rounded-md text-xs font-semibold"
             >
-              Avslutt support-okt
+              Avslutt supportøkt
             </button>
           </div>
         )}
