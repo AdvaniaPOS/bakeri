@@ -80,6 +80,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.ingest_susoft_admin_carts",
         "schedule": crontab(minute="*/5"),
     },
+    # PUSH-RETRY: prov igjen mislykkede cart-pushes hvert 2. minutt (to-veis sync).
+    "retry-pending-cart-pushes": {
+        "task": "app.tasks.retry_pending_cart_pushes",
+        "schedule": crontab(minute="*/2"),
+    },
     # HEALTH-CHECK: stabil test mot SuSoft hvert 2. minutt.
     # Oppdaterer tenant.susoft_connection_status. Logger automatisk gjenoppretting.
     "susoft-health-check": {
@@ -481,6 +486,23 @@ def ingest_susoft_admin_carts(days_back: int = 30):
     """
     from .services.susoft_ingest import ingest_susoft_admin_carts_all_tenants
     return ingest_susoft_admin_carts_all_tenants(days_back=days_back)
+
+
+@celery_app.task(name="app.tasks.retry_pending_cart_pushes")
+def retry_pending_cart_pushes(limit: int = 50):
+    """
+    Retry cart-import-ordrer der inline-PUT mot SuSoft feilet.
+
+    Kjøres hvert 2. minutt. Plukker opp ordrer med susoft_pending_push=True
+    og prøver å pushe dem på nytt. Lykkes pushen, clears flagget. Hvis ikke,
+    blir feilen lagret i susoft_last_push_error og vi prøver igjen neste runde.
+    """
+    from .services.susoft_push import retry_pending_pushes
+    db = SessionLocal()
+    try:
+        return retry_pending_pushes(db, limit=limit)
+    finally:
+        db.close()
 
 
 @celery_app.task(name="app.tasks.susoft_health_check")

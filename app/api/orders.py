@@ -110,6 +110,34 @@ def _sync_order_inline(db: Session, order: Order) -> None:
             db.commit()
 
 
+def _maybe_push_cart_to_susoft(db: Session, order: Order) -> None:
+    """
+    Hvis ordren er en SuSoft cart-import (DRAFT, source=susoft_cart_import),
+    marker pending_push og forsøk en inline PUT mot SuSoft.
+
+    Ved feil beholdes pending_push=True og Celery-sweeperen prøver igjen.
+    Denne funksjonen committer DB-endringer selv.
+    """
+    if order.source != "susoft_cart_import" or not order.susoft_uuid:
+        return
+    if order.status != OrderStatus.DRAFT:
+        return
+    order.susoft_pending_push = True
+    db.commit()
+    try:
+        from ..services.susoft_push import push_order_to_susoft
+        push_order_to_susoft(db, order)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        # push_order_to_susoft fanger normalt sine egne feil, men som
+        # safety net: rull tilbake og logg.
+        db.rollback()
+        logger.warning(
+            "Inline SuSoft cart-push feilet for order_id=%s: %s",
+            order.id, exc,
+        )
+
+
 def _load_order(db: Session, order_id: int, tenant_id: int) -> Order:
     order = db.execute(
         select(Order)
@@ -375,6 +403,9 @@ async def update_order(
         # Trigg også Celery (no-op hvis ikke konfigurert).
         background_tasks.add_task(_trigger_sync, order.id)
 
+    # To-veis sync: hvis dette er en SuSoft cart-import, push endringer tilbake.
+    _maybe_push_cart_to_susoft(db, order)
+
     order = _load_order(db, order.id, tenant.id)
     return _to_response(order)
 
@@ -417,6 +448,7 @@ async def add_order_line(
     recalculate_order_totals(order)
     db.commit()
     db.refresh(line)
+    _maybe_push_cart_to_susoft(db, order)
     return OrderLineResponse.model_validate(line)
 
 
@@ -461,6 +493,7 @@ async def update_order_line(
     recalculate_order_totals(order)
     db.commit()
     db.refresh(line)
+    _maybe_push_cart_to_susoft(db, order)
     return OrderLineResponse.model_validate(line)
 
 
@@ -494,6 +527,7 @@ async def delete_order_line(
     db.refresh(order)
     recalculate_order_totals(order)
     db.commit()
+    _maybe_push_cart_to_susoft(db, order)
 
 
 # =============================================================================
