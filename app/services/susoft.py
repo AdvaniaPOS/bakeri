@@ -1588,23 +1588,29 @@ class SuSoftService:
             )
             return order.susoft_invoice_no
 
-        if not order.susoft_order_id:
+        # SuSoft tillater å referere eksisterende ordre med ett av:
+        # uuid, orderNo eller alternativeId.
+        # - Cart-import-ordrer: bruk susoft_uuid (den følger med fra cart'en).
+        # - Egen-genererte ordrer sendt via POST /order: bruk alternativeId
+        #   (= vår order.id, satt når vi opprettet ordren).
+        order_ref: Dict[str, Any]
+        if order.susoft_uuid:
+            order_ref = {"uuid": order.susoft_uuid}
+        elif order.susoft_order_id:
+            order_ref = {"alternativeId": str(order.id)}
+        else:
             raise SuSoftAPIError(
-                "Ordre må være opprettet i SuSoft (har ingen susoft_order_id) "
-                "før den kan faktureres."
+                "Ordre må være opprettet i SuSoft (mangler både susoft_uuid "
+                "og susoft_order_id) før den kan faktureres."
             )
 
         inv_date = invoiced_date or date.today()
         due_date = inv_date + timedelta(days=due_days)
 
-        # SuSoft tillater å referere eksisterende ordre med kun ett av:
-        # orderNo, uuid, alternativeId. Vi bruker alternativeId (= vår order.id).
         payload = {
             "invoicedDate": inv_date.strftime("%Y-%m-%d"),
             "dueDate": due_date.strftime("%Y-%m-%d"),
-            "orders": [
-                {"alternativeId": str(order.id)}
-            ],
+            "orders": [order_ref],
         }
 
         endpoint = "/invoice"

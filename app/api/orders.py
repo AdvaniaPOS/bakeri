@@ -912,8 +912,22 @@ async def invoice_order(
     try:
         service = SuSoftService(db, tenant_id=tenant.id)
 
-        # Steg 1: Sørg for at ordren finnes i SuSoft først.
-        if not order.susoft_order_id:
+        # Steg 1: Sørg for at ordren finnes i SuSoft først, og at
+        # eventuelle lokale endringer er sendt opp.
+        if order.source == "susoft_cart_import" and order.susoft_uuid:
+            # Cart-import: ordren finnes allerede i SuSoft (med uuid).
+            # Push eventuelle lokale endringer (samme som "Send"-knappen)
+            # før vi fakturerer, slik at SuSoft har siste linjer/priser.
+            from ..services.susoft_push import push_order_to_susoft
+            push_summary = push_order_to_susoft(db, order, service=service)
+            db.commit()
+            if push_summary.get("status") == "failed":
+                raise SuSoftAPIError(
+                    f"Kunne ikke synkronisere endringer før fakturering: "
+                    f"{push_summary.get('error') or 'ukjent feil'}"
+                )
+        elif not order.susoft_order_id:
+            # Egen-generert ordre som ikke er sendt enda: opprett den først.
             susoft_id = service.create_order(order)
             order.susoft_order_id = susoft_id
             order.sync_status = SyncStatus.SYNCED
