@@ -197,11 +197,32 @@ def push_order_to_susoft(
     svc = service or SuSoftService(db, tenant_id=order.tenant_id)
 
     try:
-        base_payload = svc.get_admin_order_detail(order.susoft_uuid)
+        # Foretrekk lokalt cachet admin-payload (lagret ved forrige ingest/push).
+        # GET /admin/order/uuid/{uuid} returnerer 404 for noen cart-typer, mens
+        # PUT på samme path fungerer — derfor unngår vi å re-fetch'e før push.
+        base_payload: Optional[Dict[str, Any]] = None
+        cached = order.susoft_admin_payload
+        if isinstance(cached, dict) and cached:
+            base_payload = dict(cached)
+        else:
+            # Fallback: prøv GET hvis vi ikke har en cachet payload.
+            try:
+                base_payload = svc.get_admin_order_detail(order.susoft_uuid)
+            except SuSoftAPIError as e:
+                logger.warning(
+                    "GET admin-detalj feilet for order_id=%s uuid=%s: %s -- prøver minimal payload",
+                    order.id, order.susoft_uuid, e,
+                )
+                base_payload = None
+
         if not base_payload:
-            order.susoft_pending_push = True
-            order.susoft_last_push_error = "Cart finnes ikke i SuSoft (404)"
-            return {"status": "failed", "error": "not_found"}
+            # Siste utvei: bygg en minimal payload med kun det vi vet lokalt.
+            # SuSoft krever uuid + shopId + lines; resten er valgfritt for PUT.
+            base_payload = {
+                "uuid": order.susoft_uuid,
+                "shopId": str(svc._admin_shop_id) if getattr(svc, "_admin_shop_id", None) else "100",
+                "lines": [],
+            }
 
         put_payload = _build_put_payload(db, order, base_payload)
         # Debug: log linje-summary (qty/price per produkt) for å verifisere hva vi sender
