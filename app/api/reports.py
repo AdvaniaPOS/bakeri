@@ -1,6 +1,7 @@
 """
 Reports & analytics endpoints. Tenant-scoped.
 """
+import logging
 from collections import defaultdict
 from datetime import date, timedelta
 from typing import List, Optional
@@ -17,6 +18,8 @@ from ..auth_models import Tenant
 from ..models import Order, OrderLine, Customer, Product, Route, OrderStatus
 from ..tenant_scope import get_or_404
 from ..services.pdf import render_pdf, tenant_header_context
+
+logger = logging.getLogger(__name__)
 
 
 def _pdf_response(pdf_bytes: bytes, filename: str) -> Response:
@@ -589,6 +592,22 @@ async def order_confirmation_pdf(
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
+    try:
+        return _generate_order_confirmation_pdf(db, order_id, tenant)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "order_confirmation_pdf feilet for order_id=%s tenant_id=%s",
+            order_id, tenant.id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Klarte ikke generere PDF: {type(exc).__name__}: {exc}",
+        )
+
+
+def _generate_order_confirmation_pdf(db: Session, order_id: int, tenant: Tenant) -> Response:
     order = db.execute(
         select(Order)
         .where(Order.id == order_id, Order.tenant_id == tenant.id)
@@ -651,8 +670,6 @@ async def order_confirmation_pdf(
     }
     pdf = render_pdf("order_confirmation.html", ctx)
     return _pdf_response(pdf, f"ordre-{order.id}-bekreftelse.pdf")
-
-
 @router.get("/order/{order_id}/delivery.pdf")
 async def delivery_confirmation_pdf(
     order_id: int,

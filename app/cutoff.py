@@ -28,17 +28,29 @@ def is_order_locked(order) -> bool:
     return is_past_cutoff(order.delivery_date)
 
 
-def ensure_editable(order) -> None:
+def ensure_editable(order, *, user=None) -> None:
     """
     Sentral guard: kall denne fra ALLE muterende endepunkter før endringer.
 
     Kaster HTTP 423 (Locked) hvis ordren ikke kan endres.
+
+    SUPER_ADMIN og TENANT_ADMIN kan overstyre cutoff-låsen — de blir kun
+    blokkert hvis ordren er slettet (404).
     """
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordre ikke funnet")
 
     if getattr(order, "is_deleted", False):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordre er slettet")
+
+    # Admin-override
+    if user is not None:
+        try:
+            from .auth_models import UserRole as _UR
+            if getattr(user, "role", None) in (_UR.SUPER_ADMIN, _UR.TENANT_ADMIN):
+                return
+        except Exception:  # noqa: BLE001
+            pass
 
     if is_order_locked(order):
         # 423 Locked er korrekt HTTP-status for "ressursen er låst"

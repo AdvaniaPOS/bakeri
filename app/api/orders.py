@@ -359,9 +359,10 @@ async def update_order(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
+    user: User = Depends(get_current_user),
 ):
     order = _load_order(db, order_id, tenant.id)
-    ensure_editable(order)
+    ensure_editable(order, user=user)
 
     # Snapshot reference foer endring (for auto-amendment hvis ordre er bekreftet/laast)
     old_reference = order.reference
@@ -416,9 +417,10 @@ async def add_order_line(
     data: OrderLineCreate,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
+    user: User = Depends(get_current_user),
 ):
     order = _load_order(db, order_id, tenant.id)
-    ensure_editable(order)
+    ensure_editable(order, user=user)
 
     product = get_or_404(db, Product, data.product_id, tenant.id, "Product not found")
     unit_price, _, _ = get_effective_price(db, order.customer_id, product.id, order.delivery_date, tenant_id=tenant.id)
@@ -459,9 +461,10 @@ async def update_order_line(
     data: OrderLineUpdate,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
+    user: User = Depends(get_current_user),
 ):
     order = _load_order(db, order_id, tenant.id)
-    ensure_editable(order)
+    ensure_editable(order, user=user)
 
     line = db.execute(
         select(OrderLine).where(
@@ -503,9 +506,10 @@ async def delete_order_line(
     line_id: int,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
+    user: User = Depends(get_current_user),
 ):
     order = _load_order(db, order_id, tenant.id)
-    ensure_editable(order)
+    ensure_editable(order, user=user)
 
     line = db.execute(
         select(OrderLine).where(
@@ -598,19 +602,16 @@ async def delete_order(
     order = _load_order(db, order_id, tenant.id)
 
     is_in_susoft = bool(order.susoft_order_id) or bool(order.susoft_invoice_no)
-    is_super_admin = user.role == UserRole.SUPER_ADMIN
 
     if is_in_susoft:
         # Bare skjul — ikke endre status, ikke rør SuSoft-koblingen.
         order.is_deleted = True
         action_label = "hidden"
     else:
-        if not is_super_admin:
-            ensure_editable(order)
-        # else: super-admin overstyrer cutoff-lås
+        ensure_editable(order, user=user)
         order.is_deleted = True
         order.status = OrderStatus.CANCELLED
-        action_label = "deleted" + (" (super-admin override)" if is_super_admin and is_order_locked(order) else "")
+        action_label = "deleted" + (" (admin override)" if user.role in (UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN) and is_order_locked(order) else "")
 
     audit = AuditLog(
         tenant_id=tenant.id,
@@ -674,9 +675,10 @@ async def confirm_order(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
+    user: User = Depends(get_current_user),
 ):
     order = _load_order(db, order_id, tenant.id)
-    ensure_editable(order)
+    ensure_editable(order, user=user)
 
     order.status = OrderStatus.CONFIRMED
     if order.sync_status != SyncStatus.SYNCING:
