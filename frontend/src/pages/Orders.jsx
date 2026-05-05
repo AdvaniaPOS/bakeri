@@ -511,10 +511,26 @@ export default function Orders() {
                         kr {(order.total || 0).toLocaleString('nb-NO', { minimumFractionDigits: 2 })}
                       </td>
                       <td>
-                        <span className={`badge ${status.color}`}>
-                          <StatusIcon className="w-3 h-3" />
-                          {status.label}
-                        </span>
+                        <div className="relative inline-block">
+                          <span className={`badge ${status.color} ${updatingOrderId === order.id ? 'opacity-50' : ''} pr-5`}>
+                            <StatusIcon className="w-3 h-3" />
+                            {status.label}
+                            <svg className="w-3 h-3 ml-0.5 opacity-60" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+                          </span>
+                          <select
+                            value={order.status}
+                            onChange={(e) => {
+                              if (e.target.value !== order.status) updateOrderStatus(order.id, e.target.value);
+                            }}
+                            disabled={updatingOrderId === order.id}
+                            title="Endre status"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-wait"
+                          >
+                            {Object.entries(statusConfig).map(([key, cfg]) => (
+                              <option key={key} value={key}>{cfg.label}</option>
+                            ))}
+                          </select>
+                        </div>
                       </td>
                       <td>
                         {order.susoftOrderId ? (
