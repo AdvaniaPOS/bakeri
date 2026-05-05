@@ -137,20 +137,23 @@ def _build_put_payload(
     Lag PUT-payload ved å patche `base_payload` (fersk fra SuSoft) med
     lokale verdier.
 
-    Hvis `promote_to_order=True`, settes `type="ORDER"` og
-    `statusName="CONFIRMED"` (numerisk `status` fjernes) slik at SuSoft
-    flytter ordren fra CART til en ekte ORDER. Dette kreves for at
-    `:4443/invoice`-endepunktet skal akseptere ordren — `type="CART"` (selv
-    med `status=3` "Fakturer" i UI) gir HTTP 400 "Order has no lines" på
-    invoice-endepunktet.
+    NB om `promote_to_order`: SuSoft sin admin-PUT støtter IKKE å promotere
+    en CART til en ORDER ved å endre `type`-feltet — det fører til HTTP 404
+    ("Order not found"). Vi tvinger derfor alltid `type="CART"` i PUT-en og
+    håndterer ORDER-projeksjonen separat via `POST /order` (se
+    `SuSoftService.create_order`). Argumentet beholdes av bakoverkompatibilitet
+    men brukes ikke for promotering.
     """
     payload = dict(base_payload)  # shallow copy — vi erstatter top-level felt
 
-    if promote_to_order:
-        payload["type"] = "ORDER"
-        payload["statusName"] = "CONFIRMED"
-        # Fjern numerisk `status` (cart-state) slik at SuSoft ikke overstyrer.
-        payload.pop("status", None)
+    # Sørg for at vi ALLTID PUT-er som CART. Cachet payload kan ha blitt
+    # forurenset av en tidligere mislykket promote-PUT der vi satte
+    # type=ORDER lokalt; SuSoft har likevel beholdt cart'en som CART, og
+    # neste PUT med type=ORDER returnerer da 404.
+    payload["type"] = "CART"
+    # Fjern statusName=CONFIRMED hvis den lekket inn fra forrige forsøk.
+    if payload.get("statusName") == "CONFIRMED":
+        payload.pop("statusName", None)
 
     # Datoer
     if order.susoft_delivery_at is not None:
@@ -228,23 +231,22 @@ def push_order_to_susoft(
     svc = service or SuSoftService(db, tenant_id=order.tenant_id)
 
     try:
-        # Foretrekk lokalt cachet admin-payload (lagret ved forrige ingest/push).
-        # GET /admin/order/uuid/{uuid} returnerer 404 for noen cart-typer, mens
-        # PUT på samme path fungerer — derfor unngår vi å re-fetch'e før push.
+        # Hent FERSK admin-payload først. Cachet payload kan være forurenset
+        # av tidligere mislykkede promote-PUT'er (type=ORDER), noe som gir
+        # 404 ved neste PUT. Fersk GET returnerer korrekt type=CART.
         base_payload: Optional[Dict[str, Any]] = None
-        cached = order.susoft_admin_payload
-        if isinstance(cached, dict) and cached:
-            base_payload = dict(cached)
-        else:
-            # Fallback: prøv GET hvis vi ikke har en cachet payload.
-            try:
-                base_payload = svc.get_admin_order_detail(order.susoft_uuid)
-            except SuSoftAPIError as e:
-                logger.warning(
-                    "GET admin-detalj feilet for order_id=%s uuid=%s: %s -- prøver minimal payload",
-                    order.id, order.susoft_uuid, e,
-                )
-                base_payload = None
+        try:
+            base_payload = svc.get_admin_order_detail(order.susoft_uuid)
+        except SuSoftAPIError as e:
+            logger.warning(
+                "GET admin-detalj feilet for order_id=%s uuid=%s: %s -- bruker cachet",
+                order.id, order.susoft_uuid, e,
+            )
+            base_payload = None
+        if not base_payload:
+            cached = order.susoft_admin_payload
+            if isinstance(cached, dict) and cached:
+                base_payload = dict(cached)
 
         if not base_payload:
             # Siste utvei: bygg en minimal payload med kun det vi vet lokalt.
