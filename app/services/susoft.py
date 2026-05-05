@@ -1606,24 +1606,27 @@ class SuSoftService:
 
         # SuSoft tillater å referere eksisterende ordre med ett av:
         # uuid, orderNo eller alternativeId. Per spec er prioritet
-        # `orderNo` > `uuid` > `alternativeId`. Cart-import-ordrer har en egen
-        # cart-projeksjon på uuid uten linjer (gir HTTP 400 "Order has no
-        # lines"), mens orderNo / alternativeId treffer ORDER-projeksjonen
-        # som faktisk har linjene. Vi foretrekker derfor orderNo når det
-        # finnes, og bruker alternativeId fra admin-payloaden som fallback.
+        # `orderNo` > `uuid` > `alternativeId`. I praksis (cart-imports)
+        # har vi sett at `orderNo` og `uuid` treffer en linjeløs
+        # cart-projeksjon på `:4443/invoice`-endepunktet (HTTP 400 "Order
+        # has no lines"), mens `alternativeId` treffer ORDER-projeksjonen
+        # som har linjene. Vi foretrekker derfor `alternativeId` når den
+        # finnes (cachet i admin-payload eller satt fra vår order.id).
         order_ref: Dict[str, Any]
         susoft_order_no = getattr(order, "susoft_order_no", None)
         admin_alt_id = None
         if isinstance(order.susoft_admin_payload, dict):
             admin_alt_id = order.susoft_admin_payload.get("alternativeId")
+        if not admin_alt_id and isinstance(order.susoft_raw_payload, dict):
+            admin_alt_id = order.susoft_raw_payload.get("alternativeId")
 
-        if susoft_order_no:
+        if admin_alt_id:
+            order_ref = {"alternativeId": str(admin_alt_id)}
+        elif susoft_order_no:
             try:
                 order_ref = {"orderNo": int(susoft_order_no)}
             except (TypeError, ValueError):
                 order_ref = {"orderNo": str(susoft_order_no)}
-        elif admin_alt_id:
-            order_ref = {"alternativeId": str(admin_alt_id)}
         elif order.susoft_uuid:
             order_ref = {"uuid": order.susoft_uuid}
         elif order.susoft_order_id:
