@@ -18,19 +18,18 @@
   .doc-head .meta td.lbl { color: #6b7280; padding-right: 8pt; }
   .doc-head .meta td.val { font-weight: 600; color: #111827; text-align: right; }
 
-  .parties { display: flex; gap: 12pt; margin-top: 14pt; }
-  .party {
-    flex: 1; padding: 10pt 12pt; background: #f9fafb;
-    border-radius: 4pt; border-left: 3px solid {{ primary_color }};
+  .recipient {
+    margin-top: 14pt; padding: 10pt 14pt;
+    background: #ecfdf5; border-left: 3px solid #10b981;
+    border-radius: 4pt;
   }
-  .party.delivery { border-left-color: #10b981; background: #ecfdf5; }
-  .party h3 {
+  .recipient h3 {
     margin: 0 0 4pt 0; font-size: 9pt; text-transform: uppercase;
     letter-spacing: 0.06em; color: #6b7280; font-weight: 600;
   }
-  .party .name { font-size: 12pt; font-weight: 600; color: #111827; }
-  .party .row { font-size: 9.5pt; color: #374151; margin-top: 1pt; }
-  .party .muted { color: #6b7280; font-size: 9pt; }
+  .recipient .name { font-size: 12pt; font-weight: 600; color: #111827; }
+  .recipient .row { font-size: 9.5pt; color: #374151; margin-top: 1pt; }
+  .recipient .muted { color: #6b7280; font-size: 9pt; }
 
   .alert {
     margin-top: 8pt; padding: 6pt 8pt; background: #fef3c7;
@@ -74,36 +73,25 @@
   </div>
 </div>
 
-<div class="parties">
-  <div class="party">
-    <h3>Avsender</h3>
-    <div class="name">{{ tenant_legal_name or tenant_name }}</div>
-    {% if tenant_street %}<div class="row">{{ tenant_street }}</div>{% endif %}
-    {% if tenant_postal_code or tenant_city %}<div class="row">{{ tenant_postal_code }} {{ tenant_city }}</div>{% endif %}
-    {% if tenant_phone %}<div class="row muted">Tlf: {{ tenant_phone }}</div>{% endif %}
-    {% if tenant_email %}<div class="row muted">{{ tenant_email }}</div>{% endif %}
-    {% if tenant_org_number %}<div class="row muted">Org.nr: {{ tenant_org_number }} MVA</div>{% endif %}
-  </div>
-  <div class="party delivery">
-    <h3>Mottaker</h3>
-    {% if customer.company_name %}
-      <div class="name">{{ customer.company_name }}</div>
-      <div class="row">{{ customer.name }}</div>
-    {% else %}
-      <div class="name">{{ customer.name }}</div>
-    {% endif %}
-    {% if customer.contact_person and customer.contact_person != customer.name %}
-      <div class="row muted">Kontakt: {{ customer.contact_person }}</div>
-    {% endif %}
-    {% if customer.street_address %}<div class="row">{{ customer.street_address }}</div>{% endif %}
-    {% if customer.postal_code or customer.city %}<div class="row">{{ customer.postal_code }} {{ customer.city }}</div>{% endif %}
-    {% if customer.phone %}<div class="row muted">Tlf: {{ customer.phone }}</div>{% endif %}
-    {% if customer.email %}<div class="row muted">{{ customer.email }}</div>{% endif %}
-    {% if customer.org_number %}<div class="row muted">Org.nr: {{ customer.org_number }}</div>{% endif %}
-    {% if customer.delivery_instructions %}
-      <div class="alert"><strong>Leveringsmerknad:</strong> {{ customer.delivery_instructions }}</div>
-    {% endif %}
-  </div>
+<div class="recipient">
+  <h3>Mottaker</h3>
+  {% if customer.company_name %}
+    <div class="name">{{ customer.company_name }}</div>
+    <div class="row">{{ customer.name }}</div>
+  {% else %}
+    <div class="name">{{ customer.name }}</div>
+  {% endif %}
+  {% if customer.contact_person and customer.contact_person != customer.name %}
+    <div class="row muted">Kontakt: {{ customer.contact_person }}</div>
+  {% endif %}
+  {% if customer.street_address %}<div class="row">{{ customer.street_address }}</div>{% endif %}
+  {% if customer.postal_code or customer.city %}<div class="row">{{ customer.postal_code }} {{ customer.city }}</div>{% endif %}
+  {% if customer.phone %}<div class="row muted">Tlf: {{ customer.phone }}</div>{% endif %}
+  {% if customer.email %}<div class="row muted">{{ customer.email }}</div>{% endif %}
+  {% if customer.org_number %}<div class="row muted">Org.nr: {{ customer.org_number }}</div>{% endif %}
+  {% if customer.delivery_instructions %}
+    <div class="alert"><strong>Leveringsmerknad:</strong> {{ customer.delivery_instructions }}</div>
+  {% endif %}
 </div>
 
 <h2>Levert</h2>
@@ -180,14 +168,7 @@
 </div>
 
 <div class="footer-block">
-  Takk for at du handler hos {{ tenant_legal_name or tenant_name }}.
-  {% if tenant_phone or tenant_email %}
-    Spørsmål?
-    {% if tenant_phone %}Ring {{ tenant_phone }}{% endif %}
-    {% if tenant_phone and tenant_email %} eller send e-post til {% endif %}
-    {% if tenant_email %}{{ tenant_email }}{% endif %}.
-  {% endif %}
-  {% if tenant_org_number %}<br>Org.nr {{ tenant_org_number }} MVA.{% endif %}
+  Takk for at du handler hos oss.
 </div>
 {% endblock %}
 
