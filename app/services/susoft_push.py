@@ -242,6 +242,17 @@ def push_order_to_susoft(
             )
         except Exception:  # noqa: BLE001
             pass
+        # DEBUG: log FULL payload-keys og første-linje for å diagnostisere 404
+        try:
+            import json as _json
+            logger.info(
+                "SuSoft PUT-payload FULL order_id=%s top_keys=%s body=%s",
+                order.id,
+                sorted(put_payload.keys()),
+                _json.dumps(put_payload, default=str)[:3000],
+            )
+        except Exception:  # noqa: BLE001
+            pass
         result = svc.update_admin_order(order.susoft_uuid, put_payload)
 
         # Bruk responsen hvis den finnes, ellers vår egen patched payload
