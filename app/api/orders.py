@@ -10,8 +10,8 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
-from ..dependencies import get_current_tenant
-from ..auth_models import Tenant
+from ..dependencies import get_current_tenant, get_current_user
+from ..auth_models import Tenant, User, UserRole
 from ..models import (
     Order, OrderLine, OrderStatus, SyncStatus,
     Customer, Product, MasterTemplate, MasterTemplateItem,
@@ -583,6 +583,7 @@ async def delete_order(
     order_id: int,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
+    user: User = Depends(get_current_user),
 ):
     """
     Slett (eller skjul) en ordre.
@@ -592,20 +593,24 @@ async def delete_order(
       (is_deleted=True), men status og SuSoft-koblinger bevares slik at den kan
       hentes frem igjen via filter.
     - Hvis ordren ikke har vært overført til SuSoft: soft-delete + status=CANCELLED.
+    - SUPER_ADMIN kan slette selv om cutoff er passert (override).
     """
     order = _load_order(db, order_id, tenant.id)
 
     is_in_susoft = bool(order.susoft_order_id) or bool(order.susoft_invoice_no)
+    is_super_admin = user.role == UserRole.SUPER_ADMIN
 
     if is_in_susoft:
         # Bare skjul — ikke endre status, ikke rør SuSoft-koblingen.
         order.is_deleted = True
         action_label = "hidden"
     else:
-        ensure_editable(order)
+        if not is_super_admin:
+            ensure_editable(order)
+        # else: super-admin overstyrer cutoff-lås
         order.is_deleted = True
         order.status = OrderStatus.CANCELLED
-        action_label = "deleted"
+        action_label = "deleted" + (" (super-admin override)" if is_super_admin and is_order_locked(order) else "")
 
     audit = AuditLog(
         tenant_id=tenant.id,
