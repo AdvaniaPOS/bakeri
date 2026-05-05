@@ -17,10 +17,12 @@ alle rader uavhengig av pickup/delivery-tid.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -435,6 +437,171 @@ def _merge_admin_cart_row(admin_row: Dict[str, Any]) -> Dict[str, Any]:
     return merged
 
 
+def _compute_cart_hash(merged_row: Dict[str, Any]) -> str:
+    """
+    Bygger en stabil hash av sync-relevante felt fra en SuSoft-cart.
+
+    Brukes til å oppdage at SuSoft har endret carten siden forrige pull,
+    uten at vi trenger en `lastModified`-stempel (som SuSoft ikke gir).
+
+    Felt som inkluderes (alt annet er irrelevant for to-veis sync):
+      - deliveryDate / pickupDate / deliveryDateTime
+      - customerComment + ordre-level note
+      - per-linje: productId, qtyOrdered, price, discountPercent, vatPercent, line.note
+    """
+    def _norm(v: Any) -> Any:
+        if isinstance(v, Decimal):
+            return f"{v:.4f}"
+        if isinstance(v, float):
+            return f"{v:.4f}"
+        if v is None:
+            return None
+        return str(v)
+
+    parts: Dict[str, Any] = {
+        "deliveryDate": _norm(merged_row.get("deliveryDate")),
+        "deliveryDateTime": _norm(merged_row.get("deliveryDateTime")),
+        "pickupDate": _norm(merged_row.get("pickupDate")),
+        "customerComment": _norm(merged_row.get("customerComment")),
+        "note": _norm(merged_row.get("note")),
+    }
+    line_parts: List[Dict[str, Any]] = []
+    for ln in merged_row.get("lines") or []:
+        if not isinstance(ln, dict):
+            continue
+        prod = ln.get("product") or {}
+        line_parts.append({
+            "productId": _norm(ln.get("productId") or prod.get("id")),
+            "qty": _norm(ln.get("qtyOrdered") or ln.get("quantity")),
+            "price": _norm(ln.get("price") or ln.get("netPrice")),
+            "discountPercent": _norm(ln.get("discountPercent")),
+            "vatPercent": _norm(ln.get("lineTaxPercent") or ln.get("vatPercent")),
+            "note": _norm(ln.get("note")),
+        })
+    # Sorter linjer på productId+price slik at omsorting ikke teller som endring.
+    line_parts.sort(key=lambda x: (str(x.get("productId") or ""), str(x.get("price") or "")))
+    parts["lines"] = line_parts
+    blob = json.dumps(parts, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _build_order_lines_from_cart(
+    db: Session,
+    tenant_id: int,
+    order_id: int,
+    cart_lines: List[Dict[str, Any]],
+) -> Tuple[List[OrderLine], Decimal, Decimal, Decimal]:
+    """
+    Bygg OrderLine-objekter fra SuSoft cart-linjer + returner totaler.
+
+    NB: caller er ansvarlig for å `db.add()` linjene. Denne funksjonen
+    flusher ikke. Linjer der produkt ikke finnes eller qty<=0 hoppes over.
+    """
+    lines_out: List[OrderLine] = []
+    total_excl = Decimal("0.00")
+    total_vat = Decimal("0.00")
+    total_incl = Decimal("0.00")
+
+    for line in cart_lines or []:
+        if not isinstance(line, dict):
+            continue
+        product = _resolve_product(db, tenant_id, line)
+        if product is None:
+            logger.warning(
+                "Ukjent produkt i SuSoft-cart order_id=%s, productId=%s",
+                order_id, (line.get("product") or {}).get("id"),
+            )
+            continue
+        qty = _line_qty(line)
+        if qty <= 0:
+            continue
+        unit_price = _line_unit_price(line)
+        vat_rate = _line_vat_rate(line, product)
+        line_excl = (Decimal(qty) * unit_price).quantize(Decimal("0.01"))
+        line_vat = (line_excl * vat_rate / Decimal("100")).quantize(Decimal("0.01"))
+        line_incl = (line_excl + line_vat).quantize(Decimal("0.01"))
+
+        ol = OrderLine(
+            tenant_id=tenant_id,
+            order_id=order_id,
+            product_id=product.id,
+            quantity=qty,
+            unit_price=unit_price,
+            vat_rate=vat_rate,
+            line_amount_excl_vat=line_excl,
+            line_vat=line_vat,
+            line_amount_incl_vat=line_incl,
+        )
+        lines_out.append(ol)
+        total_excl += line_excl
+        total_vat += line_vat
+        total_incl += line_incl
+
+    return lines_out, total_excl, total_vat, total_incl
+
+
+def _refresh_cart_order_from_susoft(
+    db: Session,
+    tenant_id: int,
+    order: Order,
+    merged_row: Dict[str, Any],
+    new_hash: str,
+) -> None:
+    """
+    Oppdater en eksisterende DRAFT cart-import med nye data fra SuSoft.
+
+    Dette er pull-siden av to-veis sync: når SuSoft sin cart har endret
+    seg (hash != stored), erstatter vi linjer + datoer + notater lokalt.
+
+    Caller har allerede sjekket:
+      - order.status == DRAFT
+      - order.susoft_pending_push == False
+      - order.susoft_payload_hash != new_hash
+    """
+    delivery_dt = parse_susoft_datetime(
+        merged_row.get("deliveryDateTime") or merged_row.get("deliveryDate")
+    )
+    pickup_dt = parse_susoft_datetime(merged_row.get("pickupDate"))
+    if pickup_dt is not None:
+        fulfill_dt, fulfill_kind = pickup_dt, "pickup"
+    elif delivery_dt is not None:
+        fulfill_dt, fulfill_kind = delivery_dt, "delivery"
+    else:
+        fulfill_dt, fulfill_kind = None, "unknown"
+
+    chosen_dt = fulfill_dt
+    if chosen_dt is not None:
+        order.delivery_date = chosen_dt.date()
+    order.susoft_pickup_at = pickup_dt
+    order.susoft_delivery_at = delivery_dt
+    order.susoft_fulfillment_type = fulfill_kind
+
+    note = merged_row.get("note") or ""
+    customer_comment = merged_row.get("customerComment") or ""
+    order.customer_notes = "\n".join(
+        s for s in (customer_comment.strip(), note.strip()) if s
+    ) or None
+
+    # Slett gamle linjer
+    db.query(OrderLine).filter(
+        OrderLine.tenant_id == tenant_id,
+        OrderLine.order_id == order.id,
+    ).delete(synchronize_session=False)
+    db.flush()
+
+    new_lines, total_excl, total_vat, total_incl = _build_order_lines_from_cart(
+        db, tenant_id, order.id, merged_row.get("lines") or []
+    )
+    for ol in new_lines:
+        db.add(ol)
+
+    order.total_amount_excl_vat = total_excl
+    order.total_vat = total_vat
+    order.total_amount_incl_vat = total_incl
+    order.susoft_raw_payload = merged_row
+    order.susoft_payload_hash = new_hash
+
+
 def ingest_susoft_admin_carts_for_tenant(
     db: Session,
     tenant_id: int,
@@ -470,7 +637,10 @@ def ingest_susoft_admin_carts_for_tenant(
     summary = {
         "fetched": len(rows),
         "created": 0,
+        "updated": 0,
         "skipped_existing": 0,
+        "skipped_pending_push": 0,
+        "skipped_non_draft": 0,
         "errors": 0,
     }
 
@@ -485,17 +655,42 @@ def ingest_susoft_admin_carts_for_tenant(
                 continue
             uuid_str = str(uuid_val)
 
-            existing = db.execute(
-                select(Order.id).where(
+            row = _merge_admin_cart_row(admin_row)
+            new_hash = _compute_cart_hash(row)
+
+            existing_order = db.execute(
+                select(Order).where(
                     Order.tenant_id == tenant_id,
                     Order.susoft_uuid == uuid_str,
+                    Order.is_deleted == False,  # noqa: E712
                 )
             ).scalar_one_or_none()
-            if existing:
-                summary["skipped_existing"] += 1
-                continue
 
-            row = _merge_admin_cart_row(admin_row)
+            if existing_order is not None:
+                # Pull-side oppdatering (to-veis sync):
+                #   - Hopp over hvis lokal har ventende push (push vinner).
+                #   - Hopp over hvis lokal status ikke er DRAFT (lokal "tatt over").
+                #   - Hopp over hvis hash matcher (ingen endring i SuSoft).
+                #   - Ellers: oppdater lokalt fra SuSoft.
+                if existing_order.susoft_pending_push:
+                    summary["skipped_pending_push"] += 1
+                    continue
+                if existing_order.status != OrderStatus.DRAFT:
+                    summary["skipped_non_draft"] += 1
+                    continue
+                if existing_order.susoft_payload_hash == new_hash:
+                    summary["skipped_existing"] += 1
+                    continue
+                _refresh_cart_order_from_susoft(
+                    db, tenant_id, existing_order, row, new_hash
+                )
+                db.commit()
+                summary["updated"] += 1
+                logger.info(
+                    "SuSoft cart oppdatert lokalt: order_id=%s uuid=%s",
+                    existing_order.id, uuid_str,
+                )
+                continue
 
             # Finn / opprett kunde
             cust_payload = row.get("customer") or {}
@@ -548,51 +743,18 @@ def ingest_susoft_admin_carts_for_tenant(
                 susoft_delivery_at=delivery_dt,
                 susoft_fulfillment_type=fulfill_kind,
                 susoft_raw_payload=row,
+                susoft_payload_hash=new_hash,
                 source="susoft_cart_import",
                 customer_notes=customer_notes,
             )
             db.add(order)
             db.flush()
 
-            total_excl = Decimal("0.00")
-            total_vat = Decimal("0.00")
-            total_incl = Decimal("0.00")
-
-            for line in (row.get("lines") or []):
-                if not isinstance(line, dict):
-                    continue
-                product = _resolve_product(db, tenant_id, line)
-                if product is None:
-                    logger.warning(
-                        "Ukjent produkt i SuSoft-cart uuid=%s, productId=%s",
-                        uuid_str, (line.get("product") or {}).get("id"),
-                    )
-                    continue
-
-                qty = _line_qty(line)
-                if qty <= 0:
-                    continue
-                unit_price = _line_unit_price(line)
-                vat_rate = _line_vat_rate(line, product)
-                line_excl = (Decimal(qty) * unit_price).quantize(Decimal("0.01"))
-                line_vat = (line_excl * vat_rate / Decimal("100")).quantize(Decimal("0.01"))
-                line_incl = (line_excl + line_vat).quantize(Decimal("0.01"))
-
-                ol = OrderLine(
-                    tenant_id=tenant_id,
-                    order_id=order.id,
-                    product_id=product.id,
-                    quantity=qty,
-                    unit_price=unit_price,
-                    vat_rate=vat_rate,
-                    line_amount_excl_vat=line_excl,
-                    line_vat=line_vat,
-                    line_amount_incl_vat=line_incl,
-                )
+            new_lines, total_excl, total_vat, total_incl = _build_order_lines_from_cart(
+                db, tenant_id, order.id, row.get("lines") or []
+            )
+            for ol in new_lines:
                 db.add(ol)
-                total_excl += line_excl
-                total_vat += line_vat
-                total_incl += line_incl
 
             order.total_amount_excl_vat = total_excl
             order.total_vat = total_vat
@@ -610,9 +772,11 @@ def ingest_susoft_admin_carts_for_tenant(
             )
 
     logger.info(
-        "SuSoft admin-cart ingest tenant=%s: fetched=%d created=%d skipped=%d errors=%d",
-        tenant_id, summary["fetched"], summary["created"],
-        summary["skipped_existing"], summary["errors"],
+        "SuSoft admin-cart ingest tenant=%s: fetched=%d created=%d updated=%d "
+        "skipped_unchanged=%d skipped_pending=%d skipped_non_draft=%d errors=%d",
+        tenant_id, summary["fetched"], summary["created"], summary["updated"],
+        summary["skipped_existing"], summary["skipped_pending_push"],
+        summary["skipped_non_draft"], summary["errors"],
     )
     return summary
 

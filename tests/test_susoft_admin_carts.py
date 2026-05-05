@@ -156,7 +156,11 @@ def test_ingest_creates_order_with_line(db_session, tenant, cart_product, stub_s
     summary = ingest_susoft_admin_carts_for_tenant(
         db_session, tenant_id=tenant.id, days_back=30
     )
-    assert summary == {"fetched": 1, "created": 1, "skipped_existing": 0, "errors": 0}
+    assert summary == {
+        "fetched": 1, "created": 1, "updated": 0,
+        "skipped_existing": 0, "skipped_pending_push": 0,
+        "skipped_non_draft": 0, "errors": 0,
+    }
 
     order = db_session.query(Order).filter(Order.susoft_uuid == uuid).one()
     assert order.tenant_id == tenant.id
@@ -208,11 +212,130 @@ def test_ingest_dedups_existing_uuid(db_session, tenant, cart_product, stub_serv
     # Gjenopprett stubben siden den ble swappet ut, og kjør på nytt
     stub_service([row])
     second = ingest_susoft_admin_carts_for_tenant(db_session, tenant_id=tenant.id)
-    assert second == {"fetched": 1, "created": 0, "skipped_existing": 1, "errors": 0}
+    assert second == {
+        "fetched": 1, "created": 0, "updated": 0,
+        "skipped_existing": 1, "skipped_pending_push": 0,
+        "skipped_non_draft": 0, "errors": 0,
+    }
 
     # Fortsatt bare én ordre i DB
     count = db_session.query(Order).filter(Order.susoft_uuid == uuid).count()
     assert count == 1
+
+
+def test_ingest_updates_existing_when_susoft_changed(
+    db_session, tenant, cart_product, stub_service
+):
+    """
+    Pull-side av to-veis sync: hvis SuSoft har endret carten siden forrige
+    pull (qty/dato/notater), skal lokal DRAFT oppdateres tilsvarende.
+    """
+    uuid = "pull-update-uuid-0006"
+    # Første pull: qty=2
+    row1 = {**ADMIN_ROW_BASIC, "uuid": uuid}
+    row1["_detail"] = {**CART_DETAIL_BASIC, "uuid": uuid}
+    stub_service([row1])
+
+    s1 = ingest_susoft_admin_carts_for_tenant(db_session, tenant_id=tenant.id)
+    assert s1["created"] == 1
+    order = db_session.query(Order).filter(Order.susoft_uuid == uuid).one()
+    first_hash = order.susoft_payload_hash
+    assert first_hash is not None
+
+    # Ny pull, ingen endring -> skipped_existing
+    stub_service([row1])
+    s2 = ingest_susoft_admin_carts_for_tenant(db_session, tenant_id=tenant.id)
+    assert s2["updated"] == 0
+    assert s2["skipped_existing"] == 1
+
+    # SuSoft endrer qty 2 -> 5 og kommentar
+    row2 = {**ADMIN_ROW_BASIC, "uuid": uuid, "customerComment": "endret kommentar"}
+    detail2 = {**CART_DETAIL_BASIC, "uuid": uuid}
+    detail2_lines = []
+    for ln in detail2["lines"]:
+        new_ln = dict(ln)
+        new_ln["qty"] = 5
+        new_ln["qtyOrdered"] = 5
+        detail2_lines.append(new_ln)
+    detail2["lines"] = detail2_lines
+    row2["_detail"] = detail2
+    stub_service([row2])
+
+    s3 = ingest_susoft_admin_carts_for_tenant(db_session, tenant_id=tenant.id)
+    assert s3["updated"] == 1
+    assert s3["created"] == 0
+    assert s3["skipped_existing"] == 0
+
+    db_session.refresh(order)
+    assert order.susoft_payload_hash != first_hash
+    assert "endret kommentar" in (order.customer_notes or "")
+    lines = db_session.query(OrderLine).filter(OrderLine.order_id == order.id).all()
+    assert len(lines) == 1
+    assert lines[0].quantity == 5
+    assert order.total_amount_excl_vat == Decimal("1580.00")  # 5 * 316
+
+
+def test_ingest_skips_update_when_pending_push(
+    db_session, tenant, cart_product, stub_service
+):
+    """
+    Hvis lokal har susoft_pending_push=True, skal pull IKKE overskrive
+    (push vinner — venter på at lokal endring blir pushet til SuSoft).
+    """
+    uuid = "pending-push-uuid-0007"
+    row = {**ADMIN_ROW_BASIC, "uuid": uuid}
+    row["_detail"] = {**CART_DETAIL_BASIC, "uuid": uuid}
+    stub_service([row])
+    ingest_susoft_admin_carts_for_tenant(db_session, tenant_id=tenant.id)
+
+    order = db_session.query(Order).filter(Order.susoft_uuid == uuid).one()
+    order.susoft_pending_push = True
+    db_session.commit()
+
+    # SuSoft har endret qty
+    row2 = {**ADMIN_ROW_BASIC, "uuid": uuid}
+    detail2 = {**CART_DETAIL_BASIC, "uuid": uuid}
+    detail2["lines"] = [{**ln, "qty": 99, "qtyOrdered": 99} for ln in detail2["lines"]]
+    row2["_detail"] = detail2
+    stub_service([row2])
+
+    s = ingest_susoft_admin_carts_for_tenant(db_session, tenant_id=tenant.id)
+    assert s["skipped_pending_push"] == 1
+    assert s["updated"] == 0
+
+    # Lokal qty fortsatt 2 (ikke 99)
+    lines = db_session.query(OrderLine).filter(OrderLine.order_id == order.id).all()
+    assert len(lines) == 1
+    assert lines[0].quantity == 2
+
+
+def test_ingest_skips_update_when_status_not_draft(
+    db_session, tenant, cart_product, stub_service
+):
+    """Hvis lokal status ikke lenger er DRAFT, skal pull la ordren være."""
+    uuid = "non-draft-uuid-0008"
+    row = {**ADMIN_ROW_BASIC, "uuid": uuid}
+    row["_detail"] = {**CART_DETAIL_BASIC, "uuid": uuid}
+    stub_service([row])
+    ingest_susoft_admin_carts_for_tenant(db_session, tenant_id=tenant.id)
+
+    order = db_session.query(Order).filter(Order.susoft_uuid == uuid).one()
+    order.status = OrderStatus.CONFIRMED
+    db_session.commit()
+
+    # SuSoft endrer
+    row2 = {**ADMIN_ROW_BASIC, "uuid": uuid, "customerComment": "vil bli ignorert"}
+    detail2 = {**CART_DETAIL_BASIC, "uuid": uuid}
+    detail2["lines"] = [{**ln, "qty": 99, "qtyOrdered": 99} for ln in detail2["lines"]]
+    row2["_detail"] = detail2
+    stub_service([row2])
+
+    s = ingest_susoft_admin_carts_for_tenant(db_session, tenant_id=tenant.id)
+    assert s["skipped_non_draft"] == 1
+    assert s["updated"] == 0
+
+    db_session.refresh(order)
+    assert "vil bli ignorert" not in (order.customer_notes or "")
 
 
 def test_ingest_skips_unknown_products(db_session, tenant, stub_service):
