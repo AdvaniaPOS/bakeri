@@ -85,7 +85,7 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: dict
-    tenant: dict
+    tenant: Optional[dict] = None
 
 
 class RegisterTenantRequest(BaseModel):
@@ -216,8 +216,14 @@ async def login(
     if local_user and local_user.password_hash and local_user.password_hash != "__susoft__":
         # Password-protected local account exists
         if verify_password(request.password, local_user.password_hash):
-            tenant = local_user.tenant or db.query(Tenant).filter(Tenant.id == local_user.tenant_id).first()
-            if not tenant:
+            # SUPER_ADMIN kan logge inn uten tenant (platform-bruker).
+            from ..auth_models import UserRole as _UserRole
+            is_super_admin = local_user.role == _UserRole.SUPER_ADMIN
+            if local_user.tenant_id is not None:
+                tenant = local_user.tenant or db.query(Tenant).filter(Tenant.id == local_user.tenant_id).first()
+            else:
+                tenant = None
+            if not tenant and not is_super_admin:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tenant not found")
 
             # 2FA: hvis aktivert, krev gyldig TOTP-kode
@@ -238,7 +244,7 @@ async def login(
 
             token_pair = create_token_pair(
                 user_id=local_user.id,
-                tenant_id=local_user.tenant_id,
+                tenant_id=local_user.tenant_id if local_user.tenant_id is not None else 0,
                 role=local_user.role.value,
                 email=local_user.email,
             )
@@ -256,7 +262,7 @@ async def login(
                     "name": local_user.full_name,
                     "role": local_user.role.value,
                 },
-                tenant=_tenant_to_dict(tenant),
+                tenant=_tenant_to_dict(tenant) if tenant else None,
             )
         else:
             raise HTTPException(
