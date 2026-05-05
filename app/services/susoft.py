@@ -1190,6 +1190,74 @@ class SuSoftService:
         return rows
 
     # =========================================================================
+    # ADMIN-API: full cart-detalj og PUT-tilbake (to-veis sync)
+    # Endepunktene under er ikke i den offentlige Swagger-spec'en, men er
+    # bekreftet via SuSoft sin admin-webklient (advania.e-susoft.com).
+    # =========================================================================
+
+    def get_admin_order_detail(self, uuid: str) -> Optional[Dict[str, Any]]:
+        """
+        Hent FULL admin-cart-payload via `GET /admin/order/uuid/{uuid}`.
+
+        Denne payloaden inneholder alle felt som trengs for å kunne
+        gjøre en `PUT /admin/order/uuid/{uuid}` tilbake (kunde, lines med
+        full nested `product`, dato, notater osv.). Bruker admin-host
+        (api.susoft.com), ikke 4443-host.
+        """
+        if not uuid:
+            return None
+        path = f"/admin/order/uuid/{uuid}"
+        response = self._admin_request("GET", path)
+        if response.status_code == 404:
+            return None
+        if not response.is_success:
+            raise SuSoftAPIError(
+                f"GET {path} feilet: HTTP {response.status_code}",
+                response.status_code,
+                response.text,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise SuSoftAPIError(
+                f"Uventet {path}-respons: {type(body).__name__}"
+            )
+        return body
+
+    def update_admin_order(
+        self,
+        uuid: str,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Push en FULL cart-payload tilbake til SuSoft via
+        `PUT /admin/order/uuid/{uuid}`.
+
+        Caller MÅ sende en komplett payload (ikke patch). Anbefalt mønster:
+        1. Hent fersk admin-detalj via `get_admin_order_detail()`
+        2. Patch inn dine endringer (lines, datoer, notater, ...)
+        3. Send det tilbake hit.
+
+        Returnerer SuSoft-response (typisk det oppdaterte cart-objektet).
+        """
+        if not uuid:
+            raise SuSoftAPIError("update_admin_order krever uuid")
+        if not isinstance(payload, dict):
+            raise SuSoftAPIError("update_admin_order krever dict-payload")
+        path = f"/admin/order/uuid/{uuid}"
+        response = self._admin_request("PUT", path, json_body=payload)
+        if not response.is_success:
+            raise SuSoftAPIError(
+                f"PUT {path} feilet: HTTP {response.status_code} body={response.text[:300]}",
+                response.status_code,
+                response.text,
+            )
+        body = response.json() if response.content else {}
+        if not isinstance(body, dict):
+            # Noen endepunkter returnerer 200 OK uten body — det er ok.
+            body = {}
+        return body
+
+    # =========================================================================
     # SUSOFT ORDER POLLING (innkommende ordrer FRA SuSoft)
     # =========================================================================
 

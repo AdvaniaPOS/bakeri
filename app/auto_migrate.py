@@ -56,6 +56,7 @@ _BACKFILL_DEFAULTS: dict[tuple[str, str], Any] = {
     ("order_lines", "waste_quantity"): 0,
     ("order_lines", "return_quantity"): 0,
     ("tenants", "susoft_config_locked"): False,
+    ("orders", "susoft_pending_push"): False,
 }
 
 

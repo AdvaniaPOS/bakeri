@@ -823,6 +823,29 @@ class Order(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
         JSON, nullable=True,
         comment="Rå SuSoft-rad fra siste polling — for debugging/audit."
     )
+    susoft_admin_payload: Mapped[Optional[dict]] = mapped_column(
+        JSON, nullable=True,
+        comment="Sist kjente FULLE admin-cart payload fra SuSoft (/admin/order/uuid). "
+                "Brukes som basis for PUT-tilbake (to-veis sync) for å bevare alle "
+                "felt vi ikke speiler lokalt."
+    )
+    susoft_payload_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True,
+        comment="SHA256 av normaliserte sync-relevante felt fra SuSoft. "
+                "Brukes til å detektere endringer i SuSoft mellom pull-runder."
+    )
+    susoft_pending_push: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, index=True,
+        comment="True når lokal endring venter på å pushes til SuSoft via PUT /admin/order/uuid."
+    )
+    susoft_last_push_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+        comment="Sist vellykkede PUT-tilbake til SuSoft."
+    )
+    susoft_last_push_error: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+        comment="Feilmelding fra siste mislykkede push (null ved suksess)."
+    )
     source: Mapped[Optional[str]] = mapped_column(
         String(30), nullable=True, index=True,
         comment="Hvor ordren kom fra: `template`, `portal`, `manual`, `susoft_import`."
