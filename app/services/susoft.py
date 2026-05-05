@@ -1180,11 +1180,27 @@ class SuSoftService:
             uuid = row.get("uuid")
             if not uuid:
                 continue
+            detail: Optional[Dict[str, Any]] = None
+            # Foretrekk /admin/order/uuid/{uuid} — denne returnerer alltid
+            # full payload med linjer og er samme kilde som vi bygger
+            # PUT/promote-payloaden fra. /shopping-cart/uuid har historisk
+            # returnert tomme `lines` på enkelte carts.
             try:
-                detail = self.get_cart_detail(uuid)
+                detail = self.get_admin_order_detail(uuid)
             except SuSoftAPIError as e:
-                logger.warning("Klarte ikke hente cart-detalj for %s: %s", uuid, e)
-                continue
+                logger.warning(
+                    "Klarte ikke hente admin-order-detalj for %s: %s", uuid, e
+                )
+            if not detail or not detail.get("lines"):
+                try:
+                    cart_detail = self.get_cart_detail(uuid)
+                except SuSoftAPIError as e:
+                    logger.warning(
+                        "Klarte ikke hente cart-detalj for %s: %s", uuid, e
+                    )
+                    cart_detail = None
+                if cart_detail is not None:
+                    detail = cart_detail
             if detail is not None:
                 row["_detail"] = detail
         return rows
