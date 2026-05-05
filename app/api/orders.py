@@ -917,27 +917,28 @@ async def invoice_order(
         # Allerede fakturert — bare returner gjeldende state.
         return _to_response(order)
 
+    # MIDLERTIDIG SPERRE: SuSoft sin /invoice leser kun fra ORDER-projeksjonen,
+    # og ikke fra CART. For cart-import-ordrer (kassesalg fra aPOS) ville vi
+    # måttet gjøre POST /order først, som genererer en ny uuid i SuSoft og en
+    # parallell ordre-projeksjon. Det skaper duplikater ved neste pull-sync og
+    # rot i SuSoft admin. Vi venter med fakturering fra dette systemet til
+    # SuSoft tilbyr en "promote cart→order"-rute som beholder cart-uuid'en.
+    if order.source == "susoft_cart_import":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Fakturering av aPOS-ordrer er midlertidig deaktivert. "
+                "SuSoft mangler en API-rute som lar oss fakturere uten å "
+                "opprette en ny ordre-UUID. Faktureres direkte i aPOS inntil videre."
+            ),
+        )
+
     try:
         service = SuSoftService(db, tenant_id=tenant.id)
 
         # Steg 1: Sørg for at ordren finnes i SuSoft først, og at
         # eventuelle lokale endringer er sendt opp.
-        if order.source == "susoft_cart_import" and order.susoft_uuid:
-            # Cart-import: ordren finnes som CART i SuSoft admin (med uuid),
-            # men IKKE i den public ORDER-projeksjonen som /invoice leser fra.
-            # SuSoft har ingen "promote cart→order"-API, OG admin-PUT
-            # returnerer 404 for disse cart-ene, så vi kan verken promotere
-            # eller pushe lokale endringer tilbake til CART-en. I stedet
-            # oppretter vi en parallell ORDER-projeksjon via POST /order
-            # basert på lokale linjer (som er kanonisk kilde uansett).
-            # Cart'en blir liggende orphan i admin (kan ryddes manuelt der).
-            if not order.susoft_order_id:
-                susoft_id = service.create_order(order)
-                order.susoft_order_id = susoft_id
-                order.last_sync_attempt = to_naive_utc(now_utc())
-                order.sync_error_message = None
-                db.commit()
-        elif not order.susoft_order_id:
+        if not order.susoft_order_id:
             # Egen-generert ordre som ikke er sendt enda: opprett den først.
             susoft_id = service.create_order(order)
             order.susoft_order_id = susoft_id

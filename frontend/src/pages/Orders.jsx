@@ -59,6 +59,7 @@ export default function Orders() {
         invoicedAt: o.invoiced_at,
         isHidden: o.is_hidden,
         needsReview: !!o.needs_review,
+        source: o.source || null,
         createdAt: o.created_at
       }));
       setOrders(mappedOrders);
@@ -260,7 +261,7 @@ export default function Orders() {
   };
 
   const toggleSelectAllVisible = () => {
-    const visibleSelectable = filteredOrders.filter((o) => !o.susoftInvoiceNo && o.status !== 'cancelled');
+    const visibleSelectable = filteredOrders.filter((o) => !o.susoftInvoiceNo && o.status !== 'cancelled' && o.source !== 'susoft_cart_import');
     const allSelected = visibleSelectable.length > 0 && visibleSelectable.every((o) => selectedOrderIds.has(o.id));
     setSelectedOrderIds((prev) => {
       const next = new Set(prev);
@@ -696,6 +697,13 @@ export default function Orders() {
                             >
                               <FileText className="w-3 h-3" />
                               Faktura #{order.susoftInvoiceNo}
+                            </span>
+                          ) : order.source === 'susoft_cart_import' ? (
+                            <span
+                              className="ml-1 px-2.5 py-1 bg-amber-50 text-amber-700 text-xs font-medium rounded flex items-center gap-1"
+                              title="aPOS-ordrer faktureres direkte i aPOS inntil videre"
+                            >
+                              Faktureres i aPOS
                             </span>
                           ) : (
                             order.status !== 'cancelled' && (
