@@ -1255,6 +1255,17 @@ class SuSoftService:
         if not isinstance(body, dict):
             # Noen endepunkter returnerer 200 OK uten body — det er ok.
             body = {}
+        # Debug: log responsen så vi kan se hva SuSoft faktisk returnerer
+        # (er den oppdaterte cart-en, eller bare status?)
+        try:
+            resp_summary = {
+                "keys": sorted(body.keys())[:20] if body else [],
+                "lines_count": len(body.get("lines") or []) if body else 0,
+                "raw_snippet": (response.text or "")[:200],
+            }
+            logger.info("PUT %s response: %s", path, resp_summary)
+        except Exception:  # noqa: BLE001
+            pass
         return body
 
     # =========================================================================

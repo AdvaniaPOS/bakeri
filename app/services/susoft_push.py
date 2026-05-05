@@ -193,6 +193,23 @@ def push_order_to_susoft(
             return {"status": "failed", "error": "not_found"}
 
         put_payload = _build_put_payload(db, order, base_payload)
+        # Debug: log linje-summary (qty/price per produkt) for å verifisere hva vi sender
+        try:
+            line_summary = [
+                {
+                    "pid": (ln.get("product") or {}).get("id"),
+                    "qty": ln.get("qty"),
+                    "price": ln.get("price"),
+                }
+                for ln in (put_payload.get("lines") or [])
+            ]
+            logger.info(
+                "SuSoft PUT-payload order_id=%s uuid=%s lines=%s deliveryDateTime=%s customerComment=%r",
+                order.id, order.susoft_uuid, line_summary,
+                put_payload.get("deliveryDateTime"), put_payload.get("customerComment"),
+            )
+        except Exception:  # noqa: BLE001
+            pass
         result = svc.update_admin_order(order.susoft_uuid, put_payload)
 
         # Bruk responsen hvis den finnes, ellers vår egen patched payload
