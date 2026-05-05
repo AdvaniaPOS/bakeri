@@ -947,9 +947,10 @@ class SuSoftService:
 
         if response is None or not response.is_success:
             logger.error(
-                "SuSoft admin-auth feilet (tenant=%s): %s",
+                "SuSoft admin-auth feilet (tenant=%s): %s body=%s",
                 self.tenant_id,
                 response.status_code if response is not None else "no response",
+                response.text[:500] if response is not None else "",
             )
             return None
 

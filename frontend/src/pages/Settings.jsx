@@ -974,15 +974,26 @@ export default function Settings() {
                       : adminConnectionStatus.message || 'Tilkobling feilet'}
                 </span>
               </div>
-              <button
-                onClick={checkAdminConnection}
-                disabled={checkingAdminConnection || !config.admin_login || (!config.admin_has_password && !adminPassword)}
-                className="btn-secondary text-sm flex items-center gap-2"
-                title={!config.admin_login ? 'Sett admin-login forst og lagre' : ''}
-              >
-                {checkingAdminConnection ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                Test admin-tilkobling
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={saveConfig}
+                  disabled={savingConfig || !config.can_edit}
+                  className="btn-primary text-sm flex items-center gap-2"
+                  title={!config.can_edit ? 'Konfig er laast - kontakt support' : 'Lagre admin-API-feltene'}
+                >
+                  <Save className="w-4 h-4" />
+                  {savingConfig ? 'Lagrer…' : 'Lagre admin-tilgang'}
+                </button>
+                <button
+                  onClick={checkAdminConnection}
+                  disabled={checkingAdminConnection || !config.admin_login || (!config.admin_has_password && !adminPassword)}
+                  className="btn-secondary text-sm flex items-center gap-2"
+                  title={!config.admin_login ? 'Sett admin-login forst og lagre' : 'Husk a lagre forst hvis du har endret feltene'}
+                >
+                  {checkingAdminConnection ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Test admin-tilkobling
+                </button>
+              </div>
             </div>
           </div>
 
