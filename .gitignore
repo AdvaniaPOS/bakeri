@@ -58,3 +58,8 @@ data/
 *.bak
 *.tmp
 .cache/
+
+# SuSoft probing / API-dumper (kan inneholde credentials/kundedata)
+probe_admin_carts.py
+susoft_admin_carts_response.json
+susoft_cart_detail_response.json

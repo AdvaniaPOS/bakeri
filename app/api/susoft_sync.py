@@ -17,7 +17,10 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Order, SyncLog, SyncStatus, OrderStatus
 from ..services.susoft import SuSoftService, SuSoftAPIError
-from ..services.susoft_ingest import ingest_susoft_orders_for_tenant
+from ..services.susoft_ingest import (
+    ingest_susoft_orders_for_tenant,
+    ingest_susoft_admin_carts_for_tenant,
+)
 from ..dependencies import get_current_tenant
 from ..auth_models import Tenant
 from ..features import feature_required
@@ -194,6 +197,42 @@ async def ingest_orders_from_susoft(
         raise HTTPException(status_code=502, detail=f"SuSoft API error: {e.message}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingest failed: {str(e)}")
+
+
+@router.post("/orders/ingest-admin-carts")
+async def ingest_admin_carts_from_susoft(
+    days_back: int = Query(30, ge=1, le=365, description="Hvor mange dager bakover som skal pulles."),
+    shop_id: Optional[int] = Query(None, description="Overstyr tenant.susoft_admin_shop_id."),
+    type_: str = Query("CART", alias="type", description="Susoft type-filter (CART, ORDER, ANY)."),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: Session = Depends(get_db),
+):
+    """
+    Manuell trigger: hent CART-er FRA SuSoft admin-API ("API 2") for innlogget tenant.
+
+    Krever at tenant.susoft_admin_login + susoft_admin_password er satt.
+    Normalt kjøres dette automatisk hvert 5. minutt via Celery beat
+    (`app.tasks.ingest_susoft_admin_carts`).
+    """
+    if not tenant.susoft_admin_login or not tenant.susoft_admin_password_encrypted:
+        raise HTTPException(
+            status_code=400,
+            detail="Mangler admin-API-kredentialer. Sett susoft_admin_login og susoft_admin_password under /admin/susoft-config.",
+        )
+    try:
+        result = ingest_susoft_admin_carts_for_tenant(
+            db, tenant_id=tenant.id, days_back=days_back, shop_id=shop_id, type_=type_,
+        )
+        return {
+            "status": "success",
+            "tenant_id": tenant.id,
+            **result,
+            "ingested_at": datetime.utcnow(),
+        }
+    except SuSoftAPIError as e:
+        raise HTTPException(status_code=502, detail=f"SuSoft admin-API error: {e.message}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Admin-cart ingest failed: {str(e)}")
 
 
 @router.post("/customers")

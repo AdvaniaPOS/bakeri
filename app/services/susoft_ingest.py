@@ -369,3 +369,289 @@ def ingest_susoft_orders_all_tenants(days_back: int = DEFAULT_POLL_DAYS_BACK) ->
     finally:
         db.close()
     return results
+
+
+# ---------------------------------------------------------------------------
+# ADMIN-API ("API 2") -- aPOS-CART-er
+# ---------------------------------------------------------------------------
+#
+# /admin/order/list returnerer CART-er UTEN linjer. For hver cart må vi hente
+# /shopping-cart/uuid for å få linjene. SuSoftService.list_admin_carts_with_details
+# gjør begge kall og legger detaljen på `_detail`-nøkkelen.
+#
+# Numerisk status-mapping (observert):
+#   0 = aktiv/ny CART
+#   2 = lukket/konvertert CART
+# Vi behandler alle som DRAFT siden de fortsatt er i CART-tilstand i SuSoft.
+
+DEFAULT_ADMIN_CART_DAYS_BACK = 30
+
+
+def _line_qty(line: Dict[str, Any]) -> int:
+    """Cart-detalj-linjer bruker `qty`; ordre-linjer bruker `quantity`."""
+    raw = line.get("qty")
+    if raw is None:
+        raw = line.get("quantity")
+    return int(_to_decimal(raw, "0"))
+
+
+def _line_unit_price(line: Dict[str, Any]) -> Decimal:
+    """Cart-linjer bruker `price` (ekskl. mva). Faller tilbake til andre felt."""
+    return _to_decimal(
+        line.get("price") or line.get("netPrice") or line.get("unitPrice"),
+        "0",
+    )
+
+
+def _line_vat_rate(line: Dict[str, Any], product: Optional[Product]) -> Decimal:
+    """Cart-linjer bruker `lineTaxPercent`."""
+    raw = (
+        line.get("lineTaxPercent")
+        or line.get("vatPercent")
+        or (product.vat_rate if product else None)
+    )
+    return _to_decimal(raw, "0")
+
+
+def _merge_admin_cart_row(admin_row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Bygg én normalisert "ordre-rad" ved å flette admin-listen + cart-detalj.
+    Detaljen vinner ved konflikt på datetime-felter (har høyere oppløsning).
+    """
+    detail = admin_row.get("_detail") or {}
+    merged: Dict[str, Any] = dict(admin_row)
+    # Detail har bedre data for kunde, datoer, og linjer
+    if isinstance(detail.get("customer"), dict):
+        # Kombiner: detail har displayName/address/isActive, admin har email i nested address
+        merged_customer = dict(admin_row.get("customer") or {})
+        merged_customer.update(detail["customer"])
+        merged["customer"] = merged_customer
+    if detail.get("orderDateTime"):
+        merged["orderDateTime"] = detail["orderDateTime"]
+    if detail.get("deliveryDateTime"):
+        merged["deliveryDateTime"] = detail["deliveryDateTime"]
+    if detail.get("lines"):
+        merged["lines"] = detail["lines"]
+    return merged
+
+
+def ingest_susoft_admin_carts_for_tenant(
+    db: Session,
+    tenant_id: int,
+    days_back: int = DEFAULT_ADMIN_CART_DAYS_BACK,
+    shop_id: Optional[int] = None,
+    type_: str = "CART",
+) -> Dict[str, int]:
+    """
+    Hent CART-er fra SuSoft admin-API ("API 2") og opprett lokalt for de som
+    mangler. Dedup mot `orders.susoft_uuid` (samme nøkkel som /order/list).
+
+    Returnerer: {fetched, created, skipped_existing, errors}.
+    """
+    today = date.today()
+    date_from = today - timedelta(days=days_back)
+    date_to = today + timedelta(days=days_back)
+
+    service = SuSoftService(db, tenant_id=tenant_id)
+
+    try:
+        rows = service.list_admin_carts_with_details(
+            date_from=date_from,
+            date_to=date_to,
+            type_=type_,
+            shop_id=shop_id,
+        )
+    except SuSoftAPIError as e:
+        logger.error(
+            "SuSoft list_admin_carts feilet (tenant=%s): %s", tenant_id, e
+        )
+        return {"fetched": 0, "created": 0, "skipped_existing": 0, "errors": 1}
+
+    summary = {
+        "fetched": len(rows),
+        "created": 0,
+        "skipped_existing": 0,
+        "errors": 0,
+    }
+
+    for admin_row in rows:
+        try:
+            uuid_val = admin_row.get("uuid")
+            if not uuid_val:
+                logger.debug(
+                    "Hopper over admin-rad uten uuid (orderNo=%s)",
+                    admin_row.get("orderNo"),
+                )
+                continue
+            uuid_str = str(uuid_val)
+
+            existing = db.execute(
+                select(Order.id).where(
+                    Order.tenant_id == tenant_id,
+                    Order.susoft_uuid == uuid_str,
+                )
+            ).scalar_one_or_none()
+            if existing:
+                summary["skipped_existing"] += 1
+                continue
+
+            row = _merge_admin_cart_row(admin_row)
+
+            # Finn / opprett kunde
+            cust_payload = row.get("customer") or {}
+            if not isinstance(cust_payload, dict) or not cust_payload:
+                customer = _get_or_create_unknown_customer(db, tenant_id)
+            else:
+                customer = _find_or_create_customer_from_payload(
+                    db, tenant_id, cust_payload
+                )
+
+            order_dt = parse_susoft_datetime(
+                row.get("orderDateTime") or row.get("orderDate")
+            )
+            delivery_dt = parse_susoft_datetime(
+                row.get("deliveryDateTime") or row.get("deliveryDate")
+            )
+            pickup_dt = parse_susoft_datetime(row.get("pickupDate"))
+
+            # Velg fulfillment: pickup foretrekkes, ellers delivery
+            if pickup_dt is not None:
+                fulfill_dt, fulfill_kind = pickup_dt, "pickup"
+            elif delivery_dt is not None:
+                fulfill_dt, fulfill_kind = delivery_dt, "delivery"
+            else:
+                fulfill_dt, fulfill_kind = None, "unknown"
+
+            chosen_dt = fulfill_dt or order_dt
+            local_delivery_date: date = chosen_dt.date() if chosen_dt else today
+
+            # CART -> alltid DRAFT (uavhengig av numerisk status)
+            status = OrderStatus.DRAFT
+
+            # Notater: admin-listen har note + customerComment.
+            note = row.get("note") or ""
+            customer_comment = row.get("customerComment") or ""
+            customer_notes = "\n".join(
+                s for s in (customer_comment.strip(), note.strip()) if s
+            ) or None
+
+            order = Order(
+                tenant_id=tenant_id,
+                customer_id=customer.id,
+                delivery_date=local_delivery_date,
+                status=status,
+                sync_status=SyncStatus.SYNCED,
+                susoft_uuid=uuid_str,
+                susoft_order_no=str(row.get("orderNo") or "")[:100] or None,
+                susoft_shop_id=str(row.get("shopId") or row.get("_shopId") or "")[:50] or None,
+                susoft_pickup_at=pickup_dt,
+                susoft_delivery_at=delivery_dt,
+                susoft_fulfillment_type=fulfill_kind,
+                susoft_raw_payload=row,
+                source="susoft_cart_import",
+                customer_notes=customer_notes,
+            )
+            db.add(order)
+            db.flush()
+
+            total_excl = Decimal("0.00")
+            total_vat = Decimal("0.00")
+            total_incl = Decimal("0.00")
+
+            for line in (row.get("lines") or []):
+                if not isinstance(line, dict):
+                    continue
+                product = _resolve_product(db, tenant_id, line)
+                if product is None:
+                    logger.warning(
+                        "Ukjent produkt i SuSoft-cart uuid=%s, productId=%s",
+                        uuid_str, (line.get("product") or {}).get("id"),
+                    )
+                    continue
+
+                qty = _line_qty(line)
+                if qty <= 0:
+                    continue
+                unit_price = _line_unit_price(line)
+                vat_rate = _line_vat_rate(line, product)
+                line_excl = (Decimal(qty) * unit_price).quantize(Decimal("0.01"))
+                line_vat = (line_excl * vat_rate / Decimal("100")).quantize(Decimal("0.01"))
+                line_incl = (line_excl + line_vat).quantize(Decimal("0.01"))
+
+                ol = OrderLine(
+                    tenant_id=tenant_id,
+                    order_id=order.id,
+                    product_id=product.id,
+                    quantity=qty,
+                    unit_price=unit_price,
+                    vat_rate=vat_rate,
+                    line_amount_excl_vat=line_excl,
+                    line_vat=line_vat,
+                    line_amount_incl_vat=line_incl,
+                )
+                db.add(ol)
+                total_excl += line_excl
+                total_vat += line_vat
+                total_incl += line_incl
+
+            order.total_amount_excl_vat = total_excl
+            order.total_vat = total_vat
+            order.total_amount_incl_vat = total_incl
+
+            db.commit()
+            summary["created"] += 1
+
+        except Exception as e:
+            db.rollback()
+            summary["errors"] += 1
+            logger.exception(
+                "Feil ved ingest av SuSoft-cart uuid=%s: %s",
+                admin_row.get("uuid"), e,
+            )
+
+    logger.info(
+        "SuSoft admin-cart ingest tenant=%s: fetched=%d created=%d skipped=%d errors=%d",
+        tenant_id, summary["fetched"], summary["created"],
+        summary["skipped_existing"], summary["errors"],
+    )
+    return summary
+
+
+def ingest_susoft_admin_carts_all_tenants(
+    days_back: int = DEFAULT_ADMIN_CART_DAYS_BACK,
+) -> Dict[str, Any]:
+    """Kjør admin-cart-ingest for alle tenants med admin-credentials konfigurert."""
+    from ..auth_models import Tenant
+
+    db = SessionLocal()
+    results: Dict[str, Any] = {"tenants": []}
+    try:
+        tenants = db.execute(
+            select(Tenant).where(
+                Tenant.susoft_admin_login.isnot(None),
+                Tenant.susoft_admin_password_encrypted.isnot(None),
+            )
+        ).scalars().all()
+        for tenant in tenants:
+            try:
+                summary = ingest_susoft_admin_carts_for_tenant(
+                    db, tenant_id=tenant.id, days_back=days_back
+                )
+                results["tenants"].append({
+                    "tenant_id": tenant.id,
+                    "tenant_name": tenant.name,
+                    **summary,
+                })
+            except Exception as e:
+                logger.exception(
+                    "Admin-cart-ingest feilet for tenant %s: %s", tenant.id, e
+                )
+                results["tenants"].append({
+                    "tenant_id": tenant.id,
+                    "tenant_name": tenant.name,
+                    "error": str(e),
+                })
+    finally:
+        db.close()
+    return results
+

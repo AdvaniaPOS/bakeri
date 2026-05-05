@@ -72,6 +72,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.ingest_susoft_orders",
         "schedule": crontab(minute="*/5"),
     },
+    # POLL: hent CART-er fra SuSoft admin-API ("API 2") hver 5. minutt.
+    "ingest-admin-carts-from-susoft": {
+        "task": "app.tasks.ingest_susoft_admin_carts",
+        "schedule": crontab(minute="*/5"),
+    },
     # HEALTH-CHECK: stabil test mot SuSoft hvert 2. minutt.
     # Oppdaterer tenant.susoft_connection_status. Logger automatisk gjenoppretting.
     "susoft-health-check": {
@@ -454,6 +459,18 @@ def ingest_susoft_orders(days_back: int = 30):
     """
     from .services.susoft_ingest import ingest_susoft_orders_all_tenants
     return ingest_susoft_orders_all_tenants(days_back=days_back)
+
+
+@celery_app.task(name="app.tasks.ingest_susoft_admin_carts")
+def ingest_susoft_admin_carts(days_back: int = 30):
+    """
+    Pull aPOS CART-er FRA SuSoft admin-API ("API 2") for alle tenants.
+
+    Kjøres hvert 5. minutt. Bruker tenant.susoft_admin_* kredentialer.
+    Dedupliserer mot `orders.susoft_uuid` (samme nøkkel som /order/list).
+    """
+    from .services.susoft_ingest import ingest_susoft_admin_carts_all_tenants
+    return ingest_susoft_admin_carts_all_tenants(days_back=days_back)
 
 
 @celery_app.task(name="app.tasks.susoft_health_check")

@@ -648,6 +648,12 @@ class SuSoftConfigResponse(BaseModel):
     last_error: Optional[str] = None
     is_locked: bool = True
     can_edit: bool = False  # Beregnes basert paa is_locked + bruker-rolle
+    # Admin-API ("API 2") - henter CART-er fra aPOS-kassen
+    admin_api_url: Optional[str] = None
+    admin_login: Optional[str] = None
+    admin_shop_url_key: Optional[str] = None
+    admin_shop_id: Optional[int] = None
+    admin_has_password: bool = False
 
 
 class SuSoftConfigUpdate(BaseModel):
@@ -655,6 +661,12 @@ class SuSoftConfigUpdate(BaseModel):
     login: Optional[str] = Field(default=None, max_length=255)
     password: Optional[str] = Field(default=None, max_length=500)
     shop_url_key: Optional[str] = Field(default=None, max_length=100)
+    # Admin-API ("API 2")
+    admin_api_url: Optional[str] = Field(default=None, max_length=500)
+    admin_login: Optional[str] = Field(default=None, max_length=255)
+    admin_password: Optional[str] = Field(default=None, max_length=500)
+    admin_shop_url_key: Optional[str] = Field(default=None, max_length=100)
+    admin_shop_id: Optional[int] = None
 
 
 @router.get("/susoft-config", response_model=SuSoftConfigResponse)
@@ -675,6 +687,11 @@ async def get_susoft_config(
         last_error=tenant.susoft_last_error,
         is_locked=locked,
         can_edit=can_edit,
+        admin_api_url=tenant.susoft_admin_api_url,
+        admin_login=tenant.susoft_admin_login,
+        admin_shop_url_key=tenant.susoft_admin_shop_url_key,
+        admin_shop_id=tenant.susoft_admin_shop_id,
+        admin_has_password=bool(tenant.susoft_admin_password_encrypted),
     )
 
 
@@ -700,6 +717,16 @@ async def update_susoft_config(
         tenant.susoft_shop_url_key = payload.shop_url_key.strip() or None
     if payload.password:
         tenant.susoft_password_encrypted = encrypt_secret(payload.password)
+    if payload.admin_api_url is not None:
+        tenant.susoft_admin_api_url = payload.admin_api_url.strip() or None
+    if payload.admin_login is not None:
+        tenant.susoft_admin_login = payload.admin_login.strip() or None
+    if payload.admin_shop_url_key is not None:
+        tenant.susoft_admin_shop_url_key = payload.admin_shop_url_key.strip() or None
+    if payload.admin_shop_id is not None:
+        tenant.susoft_admin_shop_id = int(payload.admin_shop_id)
+    if payload.admin_password:
+        tenant.susoft_admin_password_encrypted = encrypt_secret(payload.admin_password)
     tenant.susoft_connection_status = "unknown"
     db.commit()
     db.refresh(tenant)
@@ -714,6 +741,11 @@ async def update_susoft_config(
         last_error=tenant.susoft_last_error,
         is_locked=locked,
         can_edit=can_edit,
+        admin_api_url=tenant.susoft_admin_api_url,
+        admin_login=tenant.susoft_admin_login,
+        admin_shop_url_key=tenant.susoft_admin_shop_url_key,
+        admin_shop_id=tenant.susoft_admin_shop_id,
+        admin_has_password=bool(tenant.susoft_admin_password_encrypted),
     )
 
 
@@ -1096,6 +1128,12 @@ class TenantSusoftUpdate(BaseModel):
     password: Optional[str] = Field(default=None, max_length=500)
     shop_url_key: Optional[str] = Field(default=None, max_length=100)
     config_locked: Optional[bool] = None  # None = uendret
+    # Admin-API ("API 2")
+    admin_api_url: Optional[str] = Field(default=None, max_length=500)
+    admin_login: Optional[str] = Field(default=None, max_length=255)
+    admin_password: Optional[str] = Field(default=None, max_length=500)
+    admin_shop_url_key: Optional[str] = Field(default=None, max_length=100)
+    admin_shop_id: Optional[int] = None
 
 
 @router.put("/tenants/{tenant_id}/susoft-config")
@@ -1119,6 +1157,16 @@ async def super_admin_update_tenant_susoft(
         tenant.susoft_password_encrypted = encrypt_secret(payload.password)
     if payload.config_locked is not None:
         tenant.susoft_config_locked = bool(payload.config_locked)
+    if payload.admin_api_url is not None:
+        tenant.susoft_admin_api_url = payload.admin_api_url.strip() or None
+    if payload.admin_login is not None:
+        tenant.susoft_admin_login = payload.admin_login.strip() or None
+    if payload.admin_shop_url_key is not None:
+        tenant.susoft_admin_shop_url_key = payload.admin_shop_url_key.strip() or None
+    if payload.admin_shop_id is not None:
+        tenant.susoft_admin_shop_id = int(payload.admin_shop_id)
+    if payload.admin_password:
+        tenant.susoft_admin_password_encrypted = encrypt_secret(payload.admin_password)
     tenant.susoft_connection_status = "unknown"
     db.commit()
     db.refresh(tenant)
@@ -1129,6 +1177,11 @@ async def super_admin_update_tenant_susoft(
         "susoft_shop_url_key": tenant.susoft_shop_url_key,
         "susoft_has_password": bool(tenant.susoft_password_encrypted),
         "susoft_config_locked": bool(tenant.susoft_config_locked),
+        "susoft_admin_api_url": tenant.susoft_admin_api_url,
+        "susoft_admin_login": tenant.susoft_admin_login,
+        "susoft_admin_shop_url_key": tenant.susoft_admin_shop_url_key,
+        "susoft_admin_shop_id": tenant.susoft_admin_shop_id,
+        "susoft_admin_has_password": bool(tenant.susoft_admin_password_encrypted),
     }
 
 

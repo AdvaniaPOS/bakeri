@@ -141,6 +141,30 @@ class Tenant(Base, TimestampMixin, SoftDeleteMixin):
         comment="Hvis True kan kun SUPER_ADMIN endre Susoft-konfig (TENANT_ADMIN ser kun les)"
     )
 
+    # SuSoft admin-API ("API 2" - api.susoft.com uten port). Brukes for å hente
+    # CART-er (åpne handlekurver fra aPOS-kassen) via /admin/order/list.
+    # Separate kredentialer fra det vanlige API-et (api.susoft.com:4443).
+    susoft_admin_api_url: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True,
+        comment="Base URL for SuSoft admin-API (default https://api.susoft.com)"
+    )
+    susoft_admin_login: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True,
+        comment="Innloggingsbruker for admin-API"
+    )
+    susoft_admin_password_encrypted: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True,
+        comment="Fernet-kryptert passord for admin-API"
+    )
+    susoft_admin_shop_url_key: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True,
+        comment="X-Shop-Url-Key for admin-API"
+    )
+    susoft_admin_shop_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+        comment="shopIds-parameter for /admin/order/list (numerisk)"
+    )
+
     # Periodeplan-horisont (auto-fyll av ordrer fra maler)
     last_horizon_check_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True,

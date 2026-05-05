@@ -155,6 +155,15 @@ RETRY_INTERVAL_MINUTES = 60
 # Per-tenant JWT token cache: {tenant_id: (token, expires_at)}
 _token_cache: Dict[int, tuple] = {}
 
+# Per-tenant admin-API JWT token cache (separat fra hoved-API):
+# {tenant_id: (token, expires_at)}
+_admin_token_cache: Dict[int, tuple] = {}
+
+# Default-base for SuSoft admin-API ("API 2") - api.susoft.com uten port.
+SUSOFT_ADMIN_BASE_URL_DEFAULT = os.getenv(
+    "SUSOFT_ADMIN_BASE_URL", "https://api.susoft.com"
+)
+
 
 class SuSoftAPIError(Exception):
     """Exception for SuSoft API errors."""
@@ -196,6 +205,14 @@ class SuSoftService:
             base_url=self._cfg_base_url,
             timeout=SUSOFT_TIMEOUT,
         )
+        # Admin-API ("API 2") - lazy konfig + egen httpx-klient.
+        self._admin_cfg_loaded: bool = False
+        self._admin_login: str = ""
+        self._admin_password: str = ""
+        self._admin_shop_key: str = ""
+        self._admin_shop_id: Optional[int] = None
+        self._admin_base_url: str = SUSOFT_ADMIN_BASE_URL_DEFAULT
+        self._admin_client: Optional[httpx.Client] = None
 
     def _resolve_default_tenant_id(self) -> Optional[int]:
         """
@@ -744,6 +761,395 @@ class SuSoftService:
         self.db.add(alert)
         self.db.commit()
     
+    # =========================================================================
+    # SUSOFT ADMIN-API ("API 2") - henter CART-er fra aPOS-kassen
+    # =========================================================================
+    #
+    # SuSoft har et separat admin-API på api.susoft.com (uten port) med egne
+    # kredentialer. Dette er nødvendig for å hente CART-er (åpne handlekurver
+    # fra aPOS) som ikke er tilgjengelige via det vanlige /order/list.
+    #
+    # Flyt:
+    #   1. POST {admin_base}/user/auth        -> JWT for admin-API
+    #   2. GET  {admin_base}/admin/order/list -> liste over CART-er (UTEN linjer)
+    #   3. GET  {api_base}/shopping-cart/uuid -> linjer/priser/mva for én cart
+    #      (NB: cart-detalj kjøres mot 4443-API-et, men med ADMIN-Bearer)
+
+    def _load_admin_config(self, force: bool = False) -> None:
+        """Last admin-API-konfig fra Tenant-tabellen. Cachet pr. service-instans."""
+        if self._admin_cfg_loaded and not force:
+            return
+
+        login = ""
+        password = ""
+        shop_key = ""
+        shop_id: Optional[int] = None
+        base_url = SUSOFT_ADMIN_BASE_URL_DEFAULT
+
+        if self.tenant_id is not None:
+            try:
+                from ..auth_models import Tenant
+                from ..crypto_utils import decrypt_secret
+
+                tenant = self.db.get(Tenant, self.tenant_id)
+                if tenant:
+                    if tenant.susoft_admin_login:
+                        login = tenant.susoft_admin_login
+                    decrypted = decrypt_secret(tenant.susoft_admin_password_encrypted)
+                    if decrypted:
+                        password = decrypted
+                    if tenant.susoft_admin_shop_url_key:
+                        shop_key = tenant.susoft_admin_shop_url_key
+                    if tenant.susoft_admin_shop_id is not None:
+                        shop_id = int(tenant.susoft_admin_shop_id)
+                    if tenant.susoft_admin_api_url:
+                        base_url = tenant.susoft_admin_api_url
+            except Exception as e:
+                logger.warning(
+                    "Klarte ikke lese SuSoft admin-konfig fra tenant %s: %s",
+                    self.tenant_id, e,
+                )
+
+        self._admin_login = login or ""
+        self._admin_password = password or ""
+        self._admin_shop_key = shop_key or ""
+        self._admin_shop_id = shop_id
+        if base_url and base_url != self._admin_base_url:
+            if self._admin_client is not None:
+                try:
+                    self._admin_client.close()
+                except Exception:
+                    pass
+                self._admin_client = None
+            self._admin_base_url = base_url
+        self._admin_cfg_loaded = True
+
+    def _get_admin_client(self) -> httpx.Client:
+        """Lazy-instansier httpx.Client for admin-API."""
+        if self._admin_client is None:
+            self._admin_client = httpx.Client(
+                base_url=self._admin_base_url,
+                timeout=SUSOFT_TIMEOUT,
+            )
+        return self._admin_client
+
+    def _invalidate_admin_token(self) -> None:
+        if self.tenant_id is not None:
+            _admin_token_cache.pop(self.tenant_id, None)
+
+    def _get_admin_token(self, force: bool = False) -> Optional[str]:
+        """Hent JWT mot admin-API. Cachet pr. tenant_id."""
+        self._load_admin_config()
+
+        if not self._admin_login or not self._admin_password:
+            logger.warning(
+                "SuSoft admin-credentials mangler (tenant_id=%s)", self.tenant_id
+            )
+            return None
+
+        cache_key = self.tenant_id if self.tenant_id is not None else 0
+        if not force:
+            cached = _admin_token_cache.get(cache_key)
+            if cached:
+                token, expires_at = cached
+                if token and expires_at and datetime.utcnow() < expires_at:
+                    return token
+
+        headers = {"Content-Type": "application/json"}
+        if self._admin_shop_key:
+            headers["X-Shop-Url-Key"] = self._admin_shop_key
+
+        client = self._get_admin_client()
+        delay = 1.0
+        response = None
+        for attempt in range(3):
+            try:
+                response = client.post(
+                    "/user/auth",
+                    json={
+                        "login": self._admin_login,
+                        "password": self._admin_password,
+                        "refreshToken": "string",
+                    },
+                    headers=headers,
+                )
+            except (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpx.PoolTimeout,
+                httpx.RemoteProtocolError,
+                httpx.NetworkError,
+            ) as e:
+                if attempt == 2:
+                    logger.error(
+                        "SuSoft admin-auth network error (tenant=%s): %s",
+                        self.tenant_id, e,
+                    )
+                    return None
+                logger.warning(
+                    "SuSoft admin-auth network error (attempt %d/3): %s — retry %.1fs",
+                    attempt + 1, e, delay,
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 8.0)
+                continue
+            if 500 <= response.status_code < 600 and attempt < 2:
+                time.sleep(delay)
+                delay = min(delay * 2, 8.0)
+                continue
+            break
+
+        if response is None or not response.is_success:
+            logger.error(
+                "SuSoft admin-auth feilet (tenant=%s): %s",
+                self.tenant_id,
+                response.status_code if response is not None else "no response",
+            )
+            return None
+
+        data = response.json() or {}
+        token = data.get("token")
+        if not token:
+            logger.error(
+                "SuSoft admin-auth 200 OK uten token: %s", response.text[:300]
+            )
+            return None
+        _admin_token_cache[cache_key] = (token, datetime.utcnow() + timedelta(hours=23))
+        return token
+
+    def _admin_headers(self, with_auth: bool = True) -> Dict[str, str]:
+        self._load_admin_config()
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if self._admin_shop_key:
+            headers["X-Shop-Url-Key"] = self._admin_shop_key
+        if with_auth:
+            token = self._get_admin_token()
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+        return headers
+
+    def _admin_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
+        max_retries: int = 5,
+    ) -> httpx.Response:
+        """Forespørsel mot admin-API med 429/5xx/nettverks-retry. Re-auth ved 401."""
+        client = self._get_admin_client()
+        headers = self._admin_headers()
+
+        delay = 1.0
+        last_response: Optional[httpx.Response] = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = client.request(
+                    method, path, params=params, json=json_body, headers=headers
+                )
+            except (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpx.PoolTimeout,
+                httpx.RemoteProtocolError,
+                httpx.NetworkError,
+            ) as e:
+                if attempt == max_retries:
+                    raise SuSoftAPIError(
+                        f"Admin-API connection error: {e}"
+                    ) from e
+                wait = min(delay, 30.0)
+                logger.warning(
+                    "Admin-API network error %s %s (%d/%d): %s -- retry %.1fs",
+                    method, path, attempt + 1, max_retries, e, wait,
+                )
+                time.sleep(wait)
+                delay = min(delay * 2, 30.0)
+                continue
+
+            # Re-auth en gang ved 401
+            if response.status_code == 401 and attempt == 0:
+                logger.info("Admin-API 401 -- forsøker re-autentisering")
+                self._invalidate_admin_token()
+                new_token = self._get_admin_token(force=True)
+                if new_token:
+                    headers["Authorization"] = f"Bearer {new_token}"
+                    continue
+
+            should_retry = response.status_code == 429 or 500 <= response.status_code < 600
+            if not should_retry or attempt == max_retries:
+                return response
+
+            retry_after = response.headers.get("Retry-After")
+            try:
+                wait = float(retry_after) if retry_after else delay
+            except ValueError:
+                wait = delay
+            wait = min(max(wait, 0.5), 30.0)
+            logger.warning(
+                "Admin-API HTTP %d for %s %s (%d/%d) -- sleep %.1fs",
+                response.status_code, method, path, attempt + 1, max_retries, wait,
+            )
+            time.sleep(wait)
+            delay = min(delay * 2, 30.0)
+            last_response = response
+        return last_response  # type: ignore[return-value]
+
+    def test_admin_connection(self) -> bool:
+        """Test admin-API: prøv å autentisere. Returnerer True hvis vi får token."""
+        self._load_admin_config(force=True)
+        self._invalidate_admin_token()
+        return bool(self._get_admin_token(force=True))
+
+    def list_admin_carts(
+        self,
+        date_from: date,
+        date_to: date,
+        *,
+        type_: str = "CART",
+        status: str = "",
+        source: str = "ANY",
+        page_size: int = 100,
+        shop_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Hent listen over CART-er fra `/admin/order/list`.
+
+        Returnerer en flat liste med admin-rader (uten linjer). Hver rad har
+        typisk feltene: uuid, orderNo, alternativeId, customer, orderDate,
+        deliveryDate, type, status, amount, ...
+
+        For å få linjer må `get_cart_detail(uuid)` kalles per rad.
+        """
+        self._ensure_tenant_available()
+        self._load_admin_config()
+
+        sid = shop_id if shop_id is not None else self._admin_shop_id
+        if sid is None:
+            raise SuSoftAPIError(
+                "Mangler susoft_admin_shop_id på tenant for /admin/order/list"
+            )
+
+        params: Dict[str, Any] = {
+            "pageSize": page_size,
+            "term": "",
+            "shopIds": sid,
+            "type": type_,
+            "source": source,
+            "status": status,
+            "fromDateTime": date_from.strftime("%Y%m%d000000"),
+            "toDateTime": date_to.strftime("%Y%m%d235959"),
+            "salespersonId": "",
+            "deliveryId": "",
+        }
+
+        response = self._admin_request("GET", "/admin/order/list", params=params)
+        if not response.is_success:
+            raise SuSoftAPIError(
+                f"/admin/order/list feilet: HTTP {response.status_code}",
+                response.status_code,
+                response.text,
+            )
+
+        body = response.json() or []
+        if not isinstance(body, list):
+            raise SuSoftAPIError(
+                f"Uventet /admin/order/list-respons: {type(body).__name__}"
+            )
+        # Annoter shop-id for sporbarhet (likt list_orders-mønsteret)
+        for row in body:
+            if isinstance(row, dict):
+                row.setdefault("_shopId", sid)
+        logger.info(
+            "SuSoft /admin/order/list type=%s %s..%s shop=%s -> %d rader",
+            type_, date_from, date_to, sid, len(body),
+        )
+        return body
+
+    def get_cart_detail(self, uuid: str) -> Optional[Dict[str, Any]]:
+        """
+        Hent full handlekurv-detalj (inkludert linjer) for en gitt cart-uuid.
+
+        Bruker hoved-API-host (4443) men med admin-Bearer + admin-shop-key.
+        Dette er bekreftet via probe (`probe_admin_carts.py`).
+        """
+        if not uuid:
+            return None
+        self._load_admin_config()
+        token = self._get_admin_token()
+        if not token:
+            raise SuSoftAPIError("Ingen admin-token tilgjengelig for cart-detalj")
+
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+        if self._admin_shop_key:
+            headers["X-Shop-Url-Key"] = self._admin_shop_key
+
+        response = self._request_with_throttle_retry(
+            "GET",
+            "/shopping-cart/uuid",
+            params={"uuid": uuid},
+            headers=headers,
+        )
+        if response.status_code == 404:
+            return None
+        if not response.is_success:
+            raise SuSoftAPIError(
+                f"/shopping-cart/uuid feilet: HTTP {response.status_code}",
+                response.status_code,
+                response.text,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise SuSoftAPIError(
+                f"Uventet /shopping-cart/uuid-respons: {type(body).__name__}"
+            )
+        return body
+
+    def list_admin_carts_with_details(
+        self,
+        date_from: date,
+        date_to: date,
+        *,
+        type_: str = "CART",
+        status: str = "",
+        source: str = "ANY",
+        page_size: int = 100,
+        shop_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Two-step hent: liste + detalj per uuid. Detaljen merges inn på raden
+        under nøkkelen `_detail`. Carts uten uuid eller med 404-detalj
+        beholdes uendret (bare uten `_detail`).
+        """
+        rows = self.list_admin_carts(
+            date_from, date_to,
+            type_=type_, status=status, source=source,
+            page_size=page_size, shop_id=shop_id,
+        )
+        for row in rows:
+            uuid = row.get("uuid")
+            if not uuid:
+                continue
+            try:
+                detail = self.get_cart_detail(uuid)
+            except SuSoftAPIError as e:
+                logger.warning("Klarte ikke hente cart-detalj for %s: %s", uuid, e)
+                continue
+            if detail is not None:
+                row["_detail"] = detail
+        return rows
+
     # =========================================================================
     # SUSOFT ORDER POLLING (innkommende ordrer FRA SuSoft)
     # =========================================================================
