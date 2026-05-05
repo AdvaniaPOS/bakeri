@@ -130,7 +130,7 @@ export default function Layout() {
           <span className="text-sm font-semibold text-gray-900 truncate">{tenant?.name || 'Bakeri'}</span>
         </div>
         <div className="flex items-center gap-1">
-          <NotificationBell />
+          {!isSuperAdminMaster && <NotificationBell />}
           <button
             onClick={toggleTheme}
             className="p-2 -mr-2 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60"
@@ -185,9 +185,11 @@ export default function Layout() {
           >
             {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
-          <div className="hidden lg:block">
-            <NotificationBell />
-          </div>
+          {!isSuperAdminMaster && (
+            <div className="hidden lg:block">
+              <NotificationBell />
+            </div>
+          )}
           <button
             onClick={() => setMobileOpen(false)}
             className="lg:hidden p-1.5 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60"
