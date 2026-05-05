@@ -130,12 +130,24 @@ def _build_put_payload(
     db: Session,
     order: Order,
     base_payload: Dict[str, Any],
+    *,
+    promote_to_order: bool = False,
 ) -> Dict[str, Any]:
     """
     Lag PUT-payload ved å patche `base_payload` (fersk fra SuSoft) med
     lokale verdier.
+
+    Hvis `promote_to_order=True`, settes `type="ORDER"` og
+    `statusName="CONFIRMED"` slik at SuSoft flytter ordren fra CART til
+    "klar for fakturering"-lista. Brukes når vi fakturerer en cart-import.
     """
     payload = dict(base_payload)  # shallow copy — vi erstatter top-level felt
+
+    if promote_to_order:
+        payload["type"] = "ORDER"
+        payload["statusName"] = "CONFIRMED"
+        # Fjern numerisk `status=0` (cart-state) slik at SuSoft ikke overstyrer.
+        payload.pop("status", None)
 
     # Datoer
     if order.susoft_delivery_at is not None:
@@ -187,9 +199,14 @@ def push_order_to_susoft(
     order: Order,
     *,
     service: Optional[SuSoftService] = None,
+    for_invoicing: bool = False,
 ) -> Dict[str, Any]:
     """
     Push lokale endringer på en cart-import-ordre tilbake til SuSoft.
+
+    Hvis `for_invoicing=True`, promoteres ordren samtidig fra CART til
+    ORDER (`statusName="CONFIRMED"`) slik at SuSoft viser den i "klar for
+    fakturering"-lista. Da overstyres også DRAFT-sjekken.
 
     Returnerer en summary-dict:
       {"status": "pushed"|"skipped"|"failed", "reason"?: str, "error"?: str}
@@ -202,7 +219,7 @@ def push_order_to_susoft(
         return {"status": "skipped", "reason": "not_cart_import"}
     if not order.susoft_uuid:
         return {"status": "skipped", "reason": "no_uuid"}
-    if order.status != OrderStatus.DRAFT:
+    if order.status != OrderStatus.DRAFT and not for_invoicing:
         return {"status": "skipped", "reason": "not_draft"}
 
     svc = service or SuSoftService(db, tenant_id=order.tenant_id)
@@ -235,7 +252,9 @@ def push_order_to_susoft(
                 "lines": [],
             }
 
-        put_payload = _build_put_payload(db, order, base_payload)
+        put_payload = _build_put_payload(
+            db, order, base_payload, promote_to_order=for_invoicing
+        )
         # Debug: log linje-summary (qty/price per produkt) for å verifisere hva vi sender
         try:
             line_summary = [

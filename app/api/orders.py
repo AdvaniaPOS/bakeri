@@ -919,7 +919,9 @@ async def invoice_order(
             # Push eventuelle lokale endringer (samme som "Send"-knappen)
             # før vi fakturerer, slik at SuSoft har siste linjer/priser.
             from ..services.susoft_push import push_order_to_susoft
-            push_summary = push_order_to_susoft(db, order, service=service)
+            push_summary = push_order_to_susoft(
+                db, order, service=service, for_invoicing=True
+            )
             db.commit()
             if push_summary.get("status") == "failed":
                 raise SuSoftAPIError(
