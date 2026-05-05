@@ -90,7 +90,11 @@ def _line_dict_for_susoft(
             ),
         },
         "text": product.name,
+        # SuSoft bruker `qtyOrdered` internt — `qty` alene blir ignorert ved PUT.
+        # Vi sender begge for å være sikre, og overstyrer alltid template-verdiene.
         "qty": qty,
+        "qtyOrdered": qty,
+        "qtyProduced": qty,
         "price": price,
         "priceInclTax": price_incl,
         "lineTaxPercent": vat_pct,
