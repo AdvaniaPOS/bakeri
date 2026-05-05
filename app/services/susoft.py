@@ -1660,7 +1660,8 @@ class SuSoftService:
 
         endpoint = "/invoice"
         try:
-            response = self.client.post(
+            response = self._request_with_throttle_retry(
+                "POST",
                 endpoint,
                 json=payload,
                 headers=self._get_headers(),
