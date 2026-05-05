@@ -422,18 +422,20 @@ def _line_unit_price(line: Dict[str, Any], vat_rate: Optional[Decimal] = None) -
     """
     Returner unit_price EKSKL. mva (slik vi lagrer lokalt).
 
-    SuSoft har to skjemaer for cart-linjer som ser like ut, men hvor `price`
-    har motsatt betydning:
+    SuSoft cart-linjer (både admin /cart/{id} og /shopping-cart/uuid) bruker
+    `price` = INKL. mva. Forskjellen er kun hvilke totaler de leverer:
 
-    - Admin /cart/{id} (API 2):
-        price = INKL. mva, netPrice = ekskl., netTotal = qty*excl, total = qty*incl
-    - /shopping-cart/uuid (kunde-cart):
-        price = EKSKL. mva, priceInclTax = INKL. (per stk), lineTotal = qty*incl,
-        lineTaxAmount = mva-beløp, (ingen netTotal)
+    - Admin /cart/{id}: `netPrice` (ekskl per stk), `netTotal` (qty*excl),
+      `total` (qty*incl), `vatAmount`.
+    - /shopping-cart/uuid: `priceInclTax` (= price), `lineTotal` (qty*incl),
+      `lineTaxAmount` (mva-beløp). INGEN netTotal/netPrice.
 
-    Vi disambiguerer på `priceInclTax`: hvis det finnes, er `price` ekskl.
-    Ellers bruker vi `netTotal/qty` (mest presis), så `netPrice`, så
-    `price/(1+vat)` (admin-format).
+    Mest presist er å utlede ekskl. fra totaler (unngår avrundingsfeil per stk).
+    Prioritet:
+      1. (lineTotal - lineTaxAmount) / qty   — shopping-cart
+      2. netTotal / qty                       — admin-cart
+      3. netPrice                             — admin-cart
+      4. price / (1+vat)                      — fallback
     """
     qty = _to_decimal(
         line.get("qty")
@@ -442,22 +444,21 @@ def _line_unit_price(line: Dict[str, Any], vat_rate: Optional[Decimal] = None) -
         "0",
     )
 
-    # /shopping-cart/uuid-format: price er allerede ekskl. mva
-    if line.get("priceInclTax") is not None:
-        excl_per_stk = _to_decimal(line.get("price"), "0")
-        return excl_per_stk.quantize(Decimal("0.0001"))
+    line_total = line.get("lineTotal")
+    line_tax = line.get("lineTaxAmount")
+    if line_total is not None and line_tax is not None and qty and qty != 0:
+        excl_total = _to_decimal(line_total, "0") - _to_decimal(line_tax, "0")
+        return (excl_total / qty).quantize(Decimal("0.0001"))
 
-    # Admin /cart/{id}-format: bruk netTotal/qty hvis tilgjengelig (mest presis)
     net_total = line.get("netTotal")
     if net_total is not None and qty and qty != 0:
         return (_to_decimal(net_total, "0") / qty).quantize(Decimal("0.0001"))
 
-    # netPrice (ekskl) som backup
     if line.get("netPrice") is not None:
         return _to_decimal(line.get("netPrice"), "0").quantize(Decimal("0.0001"))
 
-    # Siste utvei: price er INKL. mva (admin-format), del på (1+vat)
-    incl_price = _to_decimal(line.get("price") or line.get("unitPrice"), "0")
+    # Siste utvei: price er INKL. mva, del på (1+vat)
+    incl_price = _to_decimal(line.get("price") or line.get("priceInclTax") or line.get("unitPrice"), "0")
     vat = vat_rate if vat_rate is not None else _to_decimal(
         line.get("lineTaxPercent") or line.get("vatPercent"), "0"
     )
