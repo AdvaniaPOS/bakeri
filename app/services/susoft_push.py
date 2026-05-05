@@ -83,6 +83,10 @@ def _line_dict_for_susoft(
 
     base: Dict[str, Any] = dict(template_line) if template_line else {}
     base.update({
+        # SuSoft bruker BÅDE `line` og `lineNo` — begge må være unike per linje,
+        # ellers returnerer PUT 404 ("Order not found"). Vi overstyrer alltid
+        # template-verdiene siden samme produkt kan forekomme i flere lokale linjer.
+        "line": line_no,
         "lineNo": line_no,
         "product": {
             "id": product.susoft_product_id or product.sku or str(product.id),
