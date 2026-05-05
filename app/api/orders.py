@@ -202,6 +202,14 @@ async def list_orders(
         )
     )
 
+    # Skjul ordrer uten reell kunde (SuSoft "Ukjent kunde"-placeholder).
+    # Disse er kasse-salg uten kundenavn og hører ikke hjemme i et
+    # ordresystem for kundebehandling.
+    from ..services.susoft_ingest import UKJENT_KUNDE_SUSOFT_ID
+    base = base.join(Order.customer).where(
+        Customer.susoft_customer_id != UKJENT_KUNDE_SUSOFT_ID,
+    )
+
     total = db.execute(select(func.count()).select_from(base.subquery())).scalar() or 0
 
     orders = db.execute(
