@@ -88,13 +88,23 @@ def main() -> int:
                 merged += 1
                 continue
 
+            # Frigjør SuSoft-stempler fra duplikatet FØRST (unik constraint
+            # på (tenant_id, susoft_order_id) og (tenant_id, susoft_uuid)).
+            dup_uuid = dup.susoft_uuid
+            dup_order_id = dup.susoft_order_id
+            dup_order_no = dup.susoft_order_no
+            dup.susoft_uuid = None
+            dup.susoft_order_id = None
+            dup.susoft_order_no = None
+            db.flush()
+
             # Kopier SuSoft-stempler over til originalen hvis den mangler dem
-            if not original.susoft_uuid and dup.susoft_uuid:
-                original.susoft_uuid = dup.susoft_uuid
-            if not original.susoft_order_id and dup.susoft_order_id:
-                original.susoft_order_id = dup.susoft_order_id
-            if not original.susoft_order_no and dup.susoft_order_no:
-                original.susoft_order_no = dup.susoft_order_no
+            if not original.susoft_uuid and dup_uuid:
+                original.susoft_uuid = dup_uuid
+            if not original.susoft_order_id and dup_order_id:
+                original.susoft_order_id = dup_order_id
+            if not original.susoft_order_no and dup_order_no:
+                original.susoft_order_no = dup_order_no
 
             # Marker duplikat som slettet
             dup.is_deleted = True
@@ -102,6 +112,7 @@ def main() -> int:
             existing_note = dup.internal_notes or ""
             if note_prefix not in existing_note:
                 dup.internal_notes = (note_prefix + existing_note).strip()
+            db.flush()
             merged += 1
 
         if not args.dry_run:
