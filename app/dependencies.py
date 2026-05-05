@@ -87,23 +87,39 @@ async def get_current_user(
     # Update last login
     user.last_login_at = datetime.utcnow()
     db.commit()
-    
+
+    # Impersonering: SUPER_ADMIN-brukere har tenant_id=None i DB, men ved
+    # impersonering inneholder JWT tenant_id for malt-tenanten. Overstyr
+    # in-memory slik at alle tenant-scoped sporringer ser riktig tenant.
+    # Kun lokalt pa objektet - ingen commit.
+    if token_data.tenant_id and token_data.tenant_id != user.tenant_id:
+        user.tenant_id = token_data.tenant_id
+        # Marker som ikke-modifisert for aa unngaa utilsiktet persistering
+        db.expunge(user)
+
     return user
 
 
 async def get_current_tenant(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)],
     current_user: Annotated[User, Depends(get_current_user)],
     db: Session = Depends(get_db)
 ) -> Tenant:
     """
     Get the tenant for the current user.
-    
-    Validates tenant is active and subscription is valid.
+
+    For impersonert SUPER_ADMIN er current_user.tenant_id allerede overstyrt
+    av get_current_user med JWT-tenant_id. SUPER_ADMIN i master-modus har
+    tenant_id=0/None og vil derfor faa 403, som er korrekt.
+
+    Validerer at tenant er aktiv og har gyldig abonnement.
     """
-    tenant = db.query(Tenant).filter(
-        Tenant.id == current_user.tenant_id,
-        Tenant.is_active == True
-    ).first()
+    tenant = None
+    if current_user.tenant_id:
+        tenant = db.query(Tenant).filter(
+            Tenant.id == current_user.tenant_id,
+            Tenant.is_active == True
+        ).first()
     
     if not tenant:
         raise HTTPException(
