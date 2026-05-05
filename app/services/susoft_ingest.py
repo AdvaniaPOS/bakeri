@@ -291,11 +291,21 @@ def ingest_susoft_orders_for_tenant(
                 qty = int(_to_decimal(line.get("quantity"), "0"))
                 if qty <= 0:
                     continue
-                unit_price = _to_decimal(
-                    line.get("netPrice") or line.get("unitPrice") or line.get("price"),
-                    "0",
-                )
                 vat_rate = _to_decimal(line.get("vatPercent") or product.vat_rate, "0")
+                # SuSoft `price` er INKL. mva — konverter til ekskl. for lokal lagring.
+                # Foretrekk netTotal/qty hvis tilgjengelig (mer presis enn omvendt-regning).
+                net_total = line.get("netTotal")
+                if net_total is not None and qty:
+                    unit_price = (_to_decimal(net_total, "0") / Decimal(qty)).quantize(Decimal("0.0001"))
+                else:
+                    incl_price = _to_decimal(
+                        line.get("netPrice") or line.get("unitPrice") or line.get("price"),
+                        "0",
+                    )
+                    if vat_rate and vat_rate != 0:
+                        unit_price = (incl_price / (Decimal("1") + vat_rate / Decimal("100"))).quantize(Decimal("0.0001"))
+                    else:
+                        unit_price = incl_price
                 line_excl = (Decimal(qty) * unit_price).quantize(Decimal("0.01"))
                 line_vat = (line_excl * vat_rate / Decimal("100")).quantize(Decimal("0.01"))
                 line_incl = (line_excl + line_vat).quantize(Decimal("0.01"))
@@ -397,12 +407,28 @@ def _line_qty(line: Dict[str, Any]) -> int:
     return int(_to_decimal(raw, "0"))
 
 
-def _line_unit_price(line: Dict[str, Any]) -> Decimal:
-    """Cart-linjer bruker `price` (ekskl. mva). Faller tilbake til andre felt."""
-    return _to_decimal(
+def _line_unit_price(line: Dict[str, Any], vat_rate: Optional[Decimal] = None) -> Decimal:
+    """
+    Returner unit_price EKSKL. mva (slik vi lagrer lokalt).
+
+    SuSoft sin `price`/`netPrice` på cart-linjer er INKL. mva
+    (verifisert: `total = qty * price`). Vi bruker derfor `netTotal/qty`
+    hvis tilgjengelig (mest presis), ellers `price / (1 + vat/100)`.
+    """
+    qty = _to_decimal(line.get("qty") or line.get("quantity"), "0")
+    net_total = line.get("netTotal")
+    if net_total is not None and qty and qty != 0:
+        return (_to_decimal(net_total, "0") / qty).quantize(Decimal("0.0001"))
+    incl_price = _to_decimal(
         line.get("price") or line.get("netPrice") or line.get("unitPrice"),
         "0",
     )
+    vat = vat_rate if vat_rate is not None else _to_decimal(
+        line.get("lineTaxPercent") or line.get("vatPercent"), "0"
+    )
+    if vat and vat != 0:
+        return (incl_price / (Decimal("1") + vat / Decimal("100"))).quantize(Decimal("0.0001"))
+    return incl_price
 
 
 def _line_vat_rate(line: Dict[str, Any], product: Optional[Product]) -> Decimal:
@@ -515,8 +541,8 @@ def _build_order_lines_from_cart(
         qty = _line_qty(line)
         if qty <= 0:
             continue
-        unit_price = _line_unit_price(line)
         vat_rate = _line_vat_rate(line, product)
+        unit_price = _line_unit_price(line, vat_rate)
         line_excl = (Decimal(qty) * unit_price).quantize(Decimal("0.01"))
         line_vat = (line_excl * vat_rate / Decimal("100")).quantize(Decimal("0.01"))
         line_incl = (line_excl + line_vat).quantize(Decimal("0.01"))

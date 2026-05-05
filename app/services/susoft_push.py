@@ -72,11 +72,14 @@ def _line_dict_for_susoft(
     discountRoundingMode, source, priceRef, created osv.).
     """
     qty = float(line.quantity)
-    price = float(line.unit_price)
+    unit_excl = float(line.unit_price)  # lokal lagring er EKSKL. mva
     vat_pct = float(line.vat_rate)
-    price_incl = round(price * (1 + vat_pct / 100.0), 4)
-    line_total = round(price * qty, 4)
-    line_tax = round(line_total * vat_pct / 100.0, 4)
+    # SuSoft `price` er INKL. mva (verifisert: deres total = qty * price).
+    # Vi konverterer ekskl → inkl ved push.
+    price_incl = round(unit_excl * (1 + vat_pct / 100.0), 4)
+    line_total_excl = round(unit_excl * qty, 4)
+    line_tax = round(line_total_excl * vat_pct / 100.0, 4)
+    line_total_incl = round(line_total_excl + line_tax, 4)
 
     base: Dict[str, Any] = dict(template_line) if template_line else {}
     base.update({
@@ -95,11 +98,15 @@ def _line_dict_for_susoft(
         "qty": qty,
         "qtyOrdered": qty,
         "qtyProduced": qty,
-        "price": price,
+        # SuSoft `price` og `netPrice` er INKL. mva (i deres modell).
+        "price": price_incl,
+        "netPrice": price_incl,
         "priceInclTax": price_incl,
         "lineTaxPercent": vat_pct,
         "lineTaxAmount": line_tax,
-        "lineTotal": round(line_total + line_tax, 4),
+        "lineTotal": line_total_incl,
+        "netTotal": line_total_excl,
+        "total": line_total_incl,
         "discountPercent": float(getattr(line, "discount_percent", 0) or 0),
         "discountAmount": 0.0,
     })

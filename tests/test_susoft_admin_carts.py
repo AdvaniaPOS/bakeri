@@ -181,15 +181,16 @@ def test_ingest_creates_order_with_line(db_session, tenant, cart_product, stub_s
     line = lines[0]
     assert line.product_id == cart_product.id
     assert line.quantity == 2
-    assert line.unit_price == Decimal("316.00")
+    # SuSoft `price`=316 er INKL. mva (25%) -> lokal unit_price = 316/1.25 = 252.80 ekskl.
+    assert line.unit_price == Decimal("252.8000")
     assert line.vat_rate == Decimal("25.00")
-    assert line.line_amount_excl_vat == Decimal("632.00")
-    assert line.line_vat == Decimal("158.00")
-    assert line.line_amount_incl_vat == Decimal("790.00")
+    assert line.line_amount_excl_vat == Decimal("505.60")
+    assert line.line_vat == Decimal("126.40")
+    assert line.line_amount_incl_vat == Decimal("632.00")
 
-    assert order.total_amount_excl_vat == Decimal("632.00")
-    assert order.total_vat == Decimal("158.00")
-    assert order.total_amount_incl_vat == Decimal("790.00")
+    assert order.total_amount_excl_vat == Decimal("505.60")
+    assert order.total_vat == Decimal("126.40")
+    assert order.total_amount_incl_vat == Decimal("632.00")
 
     # Kunde ble auto-opprettet fra payload
     customer = db_session.query(Customer).filter(
@@ -272,7 +273,8 @@ def test_ingest_updates_existing_when_susoft_changed(
     lines = db_session.query(OrderLine).filter(OrderLine.order_id == order.id).all()
     assert len(lines) == 1
     assert lines[0].quantity == 5
-    assert order.total_amount_excl_vat == Decimal("1580.00")  # 5 * 316
+    # 5 * 252.80 = 1264.00 ekskl. mva
+    assert order.total_amount_excl_vat == Decimal("1264.00")
 
 
 def test_ingest_skips_update_when_pending_push(
