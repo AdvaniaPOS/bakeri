@@ -137,11 +137,14 @@ def sync_schema(engine: Engine) -> dict[str, list[str]]:
                 if col.name in existing_cols:
                     continue
                 ddl = f"ALTER TABLE {table_name} ADD COLUMN {_column_ddl(col, engine.dialect)}"
+                sp = conn.begin_nested()
                 try:
                     conn.execute(text(ddl))
+                    sp.commit()
                     added.append(f"{table_name}.{col.name}")
                     logger.info("auto_migrate: added column %s.%s", table_name, col.name)
                 except Exception as exc:  # noqa: BLE001
+                    sp.rollback()
                     skipped.append(f"{table_name}.{col.name}: {exc}")
                     logger.warning("auto_migrate: kunne ikke legge til %s.%s: %s",
                                    table_name, col.name, exc)
@@ -154,6 +157,7 @@ def sync_schema(engine: Engine) -> dict[str, list[str]]:
             existing_cols = {c["name"] for c in inspect(conn).get_columns(tn)}
             if cn not in existing_cols:
                 continue
+            sp = conn.begin_nested()
             try:
                 if isinstance(default, bool):
                     val = 1 if default else 0
@@ -163,11 +167,13 @@ def sync_schema(engine: Engine) -> dict[str, list[str]]:
                     text(f"UPDATE {tn} SET {cn} = :v WHERE {cn} IS NULL"),
                     {"v": val},
                 )
+                sp.commit()
                 if result.rowcount:
                     backfilled.append(f"{tn}.{cn}={default} ({result.rowcount} rader)")
                     logger.info("auto_migrate: backfilled %s.%s=%s for %d rader",
                                 tn, cn, default, result.rowcount)
             except Exception as exc:  # noqa: BLE001
+                sp.rollback()
                 skipped.append(f"backfill {tn}.{cn}: {exc}")
 
         # 4. Partial unique indexes (race-condition-vern). Idempotent via
@@ -180,10 +186,13 @@ def sync_schema(engine: Engine) -> dict[str, list[str]]:
                 if table not in existing_tables_after:
                     continue
                 ddl = f"CREATE UNIQUE INDEX IF NOT EXISTS {idx_name} ON {table} {snippet}"
+                sp = conn.begin_nested()
                 try:
                     conn.execute(text(ddl))
+                    sp.commit()
                     logger.info("auto_migrate: ensured unique index %s", idx_name)
                 except Exception as exc:  # noqa: BLE001
+                    sp.rollback()
                     skipped.append(f"index {idx_name}: {exc}")
                     logger.warning(
                         "auto_migrate: kunne ikke opprette unique index %s "
