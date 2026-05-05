@@ -268,6 +268,12 @@ def ingest_susoft_orders_for_tenant(
                     existing_order.susoft_order_no = order_no_str[:100]
                 if order_no_str and not existing_order.susoft_order_id:
                     existing_order.susoft_order_id = order_no_str
+                # Vis SuSoft orderNo som ordre-ID i UI for direkte sporbarhet.
+                if order_no_str and (
+                    not existing_order.order_no_display
+                    or existing_order.order_no_display.startswith("APOS-CART-")
+                ):
+                    existing_order.order_no_display = f"APOS-{order_no_str}"[:50]
                 db.commit()
                 summary["skipped_existing"] += 1
                 continue
@@ -294,6 +300,9 @@ def ingest_susoft_orders_for_tenant(
 
             status = _map_status(row)
 
+            _orderno_display = (
+                f"APOS-{order_no_str}"[:50] if order_no_str else f"APOS-CART-{uuid_str[:8]}"
+            )
             order = Order(
                 tenant_id=tenant_id,
                 customer_id=customer.id,
@@ -302,6 +311,7 @@ def ingest_susoft_orders_for_tenant(
                 sync_status=SyncStatus.SYNCED,  # Allerede i SuSoft per def
                 susoft_uuid=uuid_str,
                 susoft_order_no=str(row.get("orderNo") or "")[:100] or None,
+                order_no_display=_orderno_display,
                 susoft_shop_id=str(row.get("_shopId") or "")[:50] or None,
                 susoft_pickup_at=pickup_dt,
                 susoft_delivery_at=delivery_dt,
@@ -835,6 +845,10 @@ def ingest_susoft_admin_carts_for_tenant(
                 s for s in (customer_comment.strip(), note.strip()) if s
             ) or None
 
+            _admin_orderno = str(row.get("orderNo") or "") or None
+            _admin_display = (
+                f"APOS-{_admin_orderno}"[:50] if _admin_orderno else f"APOS-CART-{uuid_str[:8]}"
+            )
             order = Order(
                 tenant_id=tenant_id,
                 customer_id=customer.id,
@@ -843,6 +857,7 @@ def ingest_susoft_admin_carts_for_tenant(
                 sync_status=SyncStatus.SYNCED,
                 susoft_uuid=uuid_str,
                 susoft_order_no=str(row.get("orderNo") or "")[:100] or None,
+                order_no_display=_admin_display,
                 susoft_shop_id=str(row.get("shopId") or row.get("_shopId") or "")[:50] or None,
                 susoft_pickup_at=pickup_dt,
                 susoft_delivery_at=delivery_dt,
