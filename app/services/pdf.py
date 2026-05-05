@@ -93,6 +93,11 @@ def tenant_header_context(tenant) -> dict[str, Any]:
     settings = tenant.settings or {}
     return {
         "tenant_name": tenant.name,
+        "tenant_legal_name": getattr(tenant, "legal_name", None),
+        "tenant_street": tenant.street_address,
+        "tenant_postal_code": tenant.postal_code,
+        "tenant_city": tenant.city,
+        "tenant_country": getattr(tenant, "country", None),
         "tenant_address": ", ".join(filter(None, [
             tenant.street_address,
             f"{tenant.postal_code or ''} {tenant.city or ''}".strip(),
@@ -100,6 +105,10 @@ def tenant_header_context(tenant) -> dict[str, Any]:
         "tenant_phone": tenant.phone,
         "tenant_email": tenant.email,
         "tenant_org_number": tenant.org_number,
+        "tenant_logo_url": getattr(tenant, "logo_url", None),
+        "tenant_website": settings.get("website") or settings.get("pdf_website"),
+        "tenant_bank_account": settings.get("bank_account") or settings.get("pdf_bank_account"),
+        "tenant_iban": settings.get("iban") or settings.get("pdf_iban"),
         "subtitle": settings.get("pdf_header_subtitle") or "",
         "primary_color": tenant.primary_color or "#4F46E5",
         "generated_at": datetime.utcnow(),

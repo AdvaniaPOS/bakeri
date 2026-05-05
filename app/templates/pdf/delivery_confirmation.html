@@ -2,45 +2,130 @@
 {% block title %}Leveringsbekreftelse {{ order.order_no_display or ('#' ~ order.id) }}{% endblock %}
 {% block report_title %}Leveringsbekreftelse{% endblock %}
 
-{% block content %}
+{% block extra_styles %}
+<style>
+  .doc-head {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 20pt; margin-top: 4pt;
+  }
+  .doc-head .left h1 {
+    margin: 0 0 2pt 0; font-size: 20pt; color: {{ primary_color }};
+  }
+  .doc-head .left .subline { font-size: 9pt; color: #6b7280; }
+  .doc-head .meta { text-align: right; font-size: 9pt; min-width: 180pt; }
+  .doc-head .meta table { margin: 0; width: 100%; }
+  .doc-head .meta td { border: none; padding: 1pt 0; }
+  .doc-head .meta td.lbl { color: #6b7280; padding-right: 8pt; }
+  .doc-head .meta td.val { font-weight: 600; color: #111827; text-align: right; }
 
-<div style="display: flex; gap: 16pt; margin-bottom: 14pt;">
-  <div style="flex: 1; padding: 10pt 12pt; background: #f3f4f6; border-radius: 4pt;">
-    <div class="small muted">Ordrenr</div>
-    <div style="font-size: 14pt; font-weight: 600; color: #111827;">
-      {{ order.order_no_display or ('#' ~ order.id) }}
-    </div>
-    <div class="small muted" style="margin-top: 6pt;">Leveringsdato</div>
-    <div style="font-weight: 600;">{{ order.delivery_date|date_no }}</div>
-    {% if order.reference %}
-      <div class="small muted" style="margin-top: 6pt;">Referanse</div>
-      <div style="font-weight: 600;">{{ order.reference }}</div>
-    {% endif %}
+  .parties { display: flex; gap: 12pt; margin-top: 14pt; }
+  .party {
+    flex: 1; padding: 10pt 12pt; background: #f9fafb;
+    border-radius: 4pt; border-left: 3px solid {{ primary_color }};
+  }
+  .party.delivery { border-left-color: #10b981; background: #ecfdf5; }
+  .party h3 {
+    margin: 0 0 4pt 0; font-size: 9pt; text-transform: uppercase;
+    letter-spacing: 0.06em; color: #6b7280; font-weight: 600;
+  }
+  .party .name { font-size: 12pt; font-weight: 600; color: #111827; }
+  .party .row { font-size: 9.5pt; color: #374151; margin-top: 1pt; }
+  .party .muted { color: #6b7280; font-size: 9pt; }
+
+  .alert {
+    margin-top: 8pt; padding: 6pt 8pt; background: #fef3c7;
+    border-left: 3px solid #f59e0b; font-size: 9pt;
+  }
+
+  table.lines th, table.lines td { font-size: 10pt; }
+  table.lines tbody tr:nth-child(even) { background: #fafafa; }
+  table.lines td.check { text-align: center; }
+
+  .signatures {
+    margin-top: 30pt; display: flex; gap: 28pt;
+  }
+  .signatures .sigbox {
+    flex: 1; border-top: 1px solid #6b7280; padding-top: 4pt;
+    font-size: 8.5pt; color: #6b7280;
+  }
+
+  .footer-block {
+    margin-top: 24pt; padding-top: 10pt;
+    border-top: 1px solid #e5e7eb;
+    font-size: 8.5pt; color: #6b7280; text-align: center;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="doc-head">
+  <div class="left">
+    <h1>Leveringsbekreftelse</h1>
+    <div class="subline">Pakkseddel og kvittering for mottak av varer.</div>
   </div>
-  <div style="flex: 1; padding: 10pt 12pt; background: #ecfdf5; border-left: 4px solid #10b981; border-radius: 4pt;">
-    <div class="small muted">Mottaker</div>
-    {% if customer.company_name %}<div style="font-weight: 600;">{{ customer.company_name }}</div>{% endif %}
-    <div>{{ customer.name }}</div>
-    {% if customer.address %}<div class="muted">{{ customer.address }}</div>{% endif %}
-    {% if customer.phone %}<div class="muted small">Tlf {{ customer.phone }}</div>{% endif %}
+  <div class="meta">
+    <table>
+      <tr><td class="lbl">Ordrenr</td><td class="val">{{ order.order_no_display or ('#' ~ order.id) }}</td></tr>
+      {% if order.reference %}<tr><td class="lbl">Deres ref.</td><td class="val">{{ order.reference }}</td></tr>{% endif %}
+      <tr><td class="lbl">Leveringsdato</td><td class="val">{{ order.delivery_date|date_no }}</td></tr>
+      {% if customer.delivery_window %}<tr><td class="lbl">Leveringstid</td><td class="val">{{ customer.delivery_window }}</td></tr>{% endif %}
+      {% if order.created_at %}<tr><td class="lbl">Bestilt</td><td class="val">{{ order.created_at|date_short }}</td></tr>{% endif %}
+    </table>
   </div>
 </div>
 
-<h2 style="margin-top: 4pt;">Levert</h2>
-<table>
+<div class="parties">
+  <div class="party">
+    <h3>Avsender</h3>
+    <div class="name">{{ tenant_legal_name or tenant_name }}</div>
+    {% if tenant_street %}<div class="row">{{ tenant_street }}</div>{% endif %}
+    {% if tenant_postal_code or tenant_city %}<div class="row">{{ tenant_postal_code }} {{ tenant_city }}</div>{% endif %}
+    {% if tenant_phone %}<div class="row muted">Tlf: {{ tenant_phone }}</div>{% endif %}
+    {% if tenant_email %}<div class="row muted">{{ tenant_email }}</div>{% endif %}
+    {% if tenant_org_number %}<div class="row muted">Org.nr: {{ tenant_org_number }} MVA</div>{% endif %}
+  </div>
+  <div class="party delivery">
+    <h3>Mottaker</h3>
+    {% if customer.company_name %}
+      <div class="name">{{ customer.company_name }}</div>
+      <div class="row">{{ customer.name }}</div>
+    {% else %}
+      <div class="name">{{ customer.name }}</div>
+    {% endif %}
+    {% if customer.contact_person and customer.contact_person != customer.name %}
+      <div class="row muted">Kontakt: {{ customer.contact_person }}</div>
+    {% endif %}
+    {% if customer.street_address %}<div class="row">{{ customer.street_address }}</div>{% endif %}
+    {% if customer.postal_code or customer.city %}<div class="row">{{ customer.postal_code }} {{ customer.city }}</div>{% endif %}
+    {% if customer.phone %}<div class="row muted">Tlf: {{ customer.phone }}</div>{% endif %}
+    {% if customer.email %}<div class="row muted">{{ customer.email }}</div>{% endif %}
+    {% if customer.org_number %}<div class="row muted">Org.nr: {{ customer.org_number }}</div>{% endif %}
+    {% if customer.delivery_instructions %}
+      <div class="alert"><strong>Leveringsmerknad:</strong> {{ customer.delivery_instructions }}</div>
+    {% endif %}
+  </div>
+</div>
+
+<h2>Levert</h2>
+<table class="lines">
   <thead>
     <tr>
-      <th style="width: 6%"></th>
+      <th style="width: 6%">Mott.</th>
+      <th style="width: 5%">#</th>
       <th>Produkt</th>
-      <th class="num" style="width: 14%">Antall</th>
-      <th style="width: 12%">Enhet</th>
+      <th class="num" style="width: 12%">Antall</th>
+      <th style="width: 10%">Enhet</th>
     </tr>
   </thead>
   <tbody>
     {% for line in lines %}
     <tr>
-      <td><span class="checkbox"></span></td>
-      <td>{{ line.product_name }}{% if line.notes %}<div class="small muted">{{ line.notes }}</div>{% endif %}</td>
+      <td class="check"><span class="checkbox"></span></td>
+      <td class="muted">{{ loop.index }}</td>
+      <td>
+        <div style="font-weight: 500;">{{ line.product_name }}</div>
+        {% if line.notes %}<div class="small muted">{{ line.notes }}</div>{% endif %}
+      </td>
       <td class="num">{{ line.quantity }}</td>
       <td>{{ line.unit or '' }}</td>
     </tr>
@@ -49,7 +134,16 @@
 </table>
 
 {% if allergens_summary %}
-  <p class="small muted" style="margin-top: 8pt;"><strong>Allergener:</strong> {{ allergens_summary }}</p>
+  <p class="small muted" style="margin-top: 8pt;">
+    <strong>Allergener:</strong> {{ allergens_summary }}
+  </p>
+{% endif %}
+
+{% if order.customer_notes %}
+  <h3 style="margin-top: 14pt;">Merknad fra kunde</h3>
+  <div style="padding: 8pt 10pt; background: #f9fafb; border-radius: 3pt; font-size: 9.5pt;">
+    {{ order.customer_notes }}
+  </div>
 {% endif %}
 
 {% if amendments and amendments|length > 0 %}
@@ -79,21 +173,21 @@
   </table>
 {% endif %}
 
-<div style="margin-top: 36pt; display: flex; gap: 30pt;">
-  <div style="flex: 1;">
-    <div style="border-top: 1px solid #6b7280; padding-top: 4pt;">
-      <div class="small muted">Mottatt av (signatur)</div>
-    </div>
-  </div>
-  <div style="flex: 1;">
-    <div style="border-top: 1px solid #6b7280; padding-top: 4pt;">
-      <div class="small muted">Dato / klokkeslett</div>
-    </div>
-  </div>
+<div class="signatures">
+  <div class="sigbox">Mottatt av (signatur)</div>
+  <div class="sigbox">Navn med blokkbokstaver</div>
+  <div class="sigbox">Dato / klokkeslett</div>
 </div>
 
-<p class="footer-note">
-  Takk for at du handler hos {{ tenant_name }}.
-  {% if tenant_org_number %}Org.nr {{ tenant_org_number }}.{% endif %}
-</p>
+<div class="footer-block">
+  Takk for at du handler hos {{ tenant_legal_name or tenant_name }}.
+  {% if tenant_phone or tenant_email %}
+    Spørsmål?
+    {% if tenant_phone %}Ring {{ tenant_phone }}{% endif %}
+    {% if tenant_phone and tenant_email %} eller send e-post til {% endif %}
+    {% if tenant_email %}{{ tenant_email }}{% endif %}.
+  {% endif %}
+  {% if tenant_org_number %}<br>Org.nr {{ tenant_org_number }} MVA.{% endif %}
+</div>
 {% endblock %}
+

@@ -607,6 +607,40 @@ async def order_confirmation_pdf(
         )
 
 
+def _customer_context(cust) -> dict:
+    """Komplett kunde-info for proff PDF-utseende."""
+    if not cust:
+        return {"name": "Ukjent kunde"}
+    delivery_window = None
+    ws, we = getattr(cust, "delivery_window_start", None), getattr(cust, "delivery_window_end", None)
+    if ws and we:
+        delivery_window = f"{ws.strftime('%H:%M')}–{we.strftime('%H:%M')}"
+    elif ws:
+        delivery_window = f"fra {ws.strftime('%H:%M')}"
+    elif we:
+        delivery_window = f"innen {we.strftime('%H:%M')}"
+    return {
+        "id": cust.id,
+        "name": cust.name or "",
+        "company_name": cust.company_name,
+        "org_number": cust.org_number,
+        "contact_person": cust.contact_person,
+        "email": cust.email,
+        "phone": cust.phone,
+        "street_address": cust.street_address,
+        "postal_code": cust.postal_code,
+        "city": cust.city,
+        "country": cust.country if cust.country and cust.country != "Norway" else None,
+        "address": ", ".join(filter(None, [
+            cust.street_address,
+            f"{cust.postal_code or ''} {cust.city or ''}".strip(),
+        ])),
+        "delivery_instructions": cust.delivery_instructions,
+        "delivery_window": delivery_window,
+        "susoft_customer_id": getattr(cust, "susoft_customer_id", None),
+    }
+
+
 def _generate_order_confirmation_pdf(db: Session, order_id: int, tenant: Tenant) -> Response:
     order = db.execute(
         select(Order)
@@ -626,6 +660,7 @@ def _generate_order_confirmation_pdf(db: Session, order_id: int, tenant: Tenant)
             "quantity": l.quantity,
             "unit": l.product.unit if l.product else "",
             "unit_price": float(l.unit_price or 0),
+            "vat_rate": float(l.vat_rate or 0),
             "line_amount_excl_vat": float((l.unit_price or 0) * l.quantity),
             "notes": l.notes,
             "allergens": getattr(l.product, "allergens", None) if l.product else None,
@@ -646,20 +681,16 @@ def _generate_order_confirmation_pdf(db: Session, order_id: int, tenant: Tenant)
             "id": order.id,
             "delivery_date": order.delivery_date,
             "notes": order.customer_notes or order.internal_notes,
+            "customer_notes": order.customer_notes,
+            "internal_notes": order.internal_notes,
             "order_no_display": order.order_no_display,
             "reference": order.reference,
+            "created_at": order.created_at,
+            "susoft_pickup_at": order.susoft_pickup_at,
+            "susoft_delivery_at": order.susoft_delivery_at,
         },
         "status_label": _status_label(order.status),
-        "customer": {
-            "name": cust.name if cust else "",
-            "company_name": cust.company_name if cust else None,
-            "address": ", ".join(filter(None, [
-                cust.street_address if cust else None,
-                f"{cust.postal_code or ''} {cust.city or ''}".strip() if cust else None,
-            ])),
-            "phone": cust.phone if cust else None,
-            "delivery_instructions": cust.delivery_instructions if cust else None,
-        },
+        "customer": _customer_context(cust),
         "lines": lines,
         "allergens_summary": allergens_summary,
         "totals": {
@@ -716,16 +747,12 @@ async def delivery_confirmation_pdf(
             "order_no_display": order.order_no_display,
             "delivery_date": order.delivery_date,
             "reference": order.reference,
+            "created_at": order.created_at,
+            "customer_notes": order.customer_notes,
+            "susoft_pickup_at": order.susoft_pickup_at,
+            "susoft_delivery_at": order.susoft_delivery_at,
         },
-        "customer": {
-            "name": cust.name if cust else "",
-            "company_name": cust.company_name if cust else None,
-            "address": ", ".join(filter(None, [
-                cust.street_address if cust else None,
-                f"{cust.postal_code or ''} {cust.city or ''}".strip() if cust else None,
-            ])),
-            "phone": cust.phone if cust else None,
-        },
+        "customer": _customer_context(cust),
         "lines": lines,
         "allergens_summary": allergens_summary,
         "amendments": sorted(order.amendments, key=lambda a: a.amended_at),
