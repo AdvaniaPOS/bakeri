@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Search, Filter, Plus, Eye, Edit2, Trash2, Truck, Clock, CheckCircle, XCircle, RefreshCw, Send, Loader2, X, Check, AlertTriangle, FileText, EyeOff, Undo2, Download } from 'lucide-react';
+import { Search, Filter, Plus, Eye, Edit2, Trash2, Truck, Clock, CheckCircle, XCircle, RefreshCw, Send, Loader2, X, Check, AlertTriangle, FileText, EyeOff, Undo2, Download, ArrowUp, ArrowDown } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const statusConfig = {
@@ -25,8 +25,11 @@ export default function Orders() {
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
   const [editingOrderId, setEditingOrderId] = useState(null);
   const [selectedOrderIds, setSelectedOrderIds] = useState(new Set());
-  // 'visible' = standard (skjuler is_deleted), 'hidden' = kun skjulte
-  const [visibilityFilter, setVisibilityFilter] = useState('visible');
+  // 'active' = aktive (ikke fakturert, ikke skjult), 'invoiced' = fakturerte, 'hidden' = skjulte
+  const [visibilityFilter, setVisibilityFilter] = useState('active');
+  // Sortering: feltnavn + retning. Default: leveringsdato stigende.
+  const [sortBy, setSortBy] = useState('deliveryDate');
+  const [sortDir, setSortDir] = useState('asc');
   // Bulk-fakturering: { running, total, current, done, results: [{orderId, ok, message}] }
   const [bulkProgress, setBulkProgress] = useState(null);
 
@@ -327,14 +330,46 @@ export default function Orders() {
     }
   }, [searchParams, setSearchParams]);
 
-  const filteredOrders = orders.filter(o => {
-    const customerName = o.customer || '';
-    const orderId = o.orderId || '';
-    const matchesSearch = customerName.toLowerCase().includes(search.toLowerCase()) ||
-                         orderId.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || o.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const toggleSort = (field) => {
+    if (sortBy === field) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(field);
+      setSortDir('asc');
+    }
+  };
+
+  const filteredOrders = orders
+    .filter((o) => {
+      const customerName = o.customer || '';
+      const orderId = o.orderId || '';
+      const matchesSearch = customerName.toLowerCase().includes(search.toLowerCase()) ||
+                           orderId.toLowerCase().includes(search.toLowerCase());
+      const matchesStatus = statusFilter === 'all' || o.status === statusFilter;
+      // Skille mellom Aktive / Fakturert. Skjulte ordrer kommer fra eget API-kall (only_hidden=true).
+      let matchesView = true;
+      if (visibilityFilter === 'active') matchesView = !o.susoftInvoiceNo;
+      else if (visibilityFilter === 'invoiced') matchesView = !!o.susoftInvoiceNo;
+      return matchesSearch && matchesStatus && matchesView;
+    })
+    .sort((a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1;
+      const get = (o) => {
+        if (sortBy === 'deliveryDate') return o.deliveryDate || '';
+        if (sortBy === 'createdAt') return o.createdAt || '';
+        if (sortBy === 'total') return o.total || 0;
+        if (sortBy === 'customer') return (o.customer || '').toLowerCase();
+        return '';
+      };
+      const av = get(a);
+      const bv = get(b);
+      // Tomme verdier til slutt uansett retning
+      if (!av && bv) return 1;
+      if (av && !bv) return -1;
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '-';
@@ -387,13 +422,22 @@ export default function Orders() {
         <div className="px-3 py-2 border-b border-gray-200 flex flex-wrap items-center gap-2 bg-white">
           <div className="flex items-center gap-1 bg-gray-100 rounded-md p-0.5">
             <button
-              onClick={() => setVisibilityFilter('visible')}
+              onClick={() => setVisibilityFilter('active')}
               className={`px-3 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors ${
-                visibilityFilter === 'visible' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'
+                visibilityFilter === 'active' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'
               }`}
-              title="Vis aktive ordrer"
+              title="Vis aktive ordrer (ikke fakturert)"
             >
               Aktive
+            </button>
+            <button
+              onClick={() => setVisibilityFilter('invoiced')}
+              className={`px-3 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors ${
+                visibilityFilter === 'invoiced' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'
+              }`}
+              title="Vis fakturerte ordrer"
+            >
+              Fakturert
             </button>
             <button
               onClick={() => setVisibilityFilter('hidden')}
@@ -470,11 +514,38 @@ export default function Orders() {
                     />
                   </th>
                   <th>Ordre</th>
-                  <th>Kunde</th>
+                  <th
+                    className="cursor-pointer select-none"
+                    onClick={() => toggleSort('customer')}
+                    title="Sorter etter kunde"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Kunde
+                      {sortBy === 'customer' && (sortDir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
+                    </span>
+                  </th>
                   <th>Ref.</th>
-                  <th>Leveringsdato</th>
+                  <th
+                    className="cursor-pointer select-none"
+                    onClick={() => toggleSort('deliveryDate')}
+                    title="Sorter etter leveringsdato"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Leveringsdato
+                      {sortBy === 'deliveryDate' && (sortDir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
+                    </span>
+                  </th>
                   <th>Varer</th>
-                  <th className="text-right">Total</th>
+                  <th
+                    className="text-right cursor-pointer select-none"
+                    onClick={() => toggleSort('total')}
+                    title="Sorter etter total"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Total
+                      {sortBy === 'total' && (sortDir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
+                    </span>
+                  </th>
                   <th>Status</th>
                   <th>SuSoft</th>
                   <th className="text-right">Handlinger</th>
