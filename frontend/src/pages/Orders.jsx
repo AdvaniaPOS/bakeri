@@ -804,7 +804,7 @@ function BulkInvoiceModal({ progress, onClose }) {
                   <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
                 )}
                 <div className="flex-1 min-w-0">
-                  <div className="font-mono text-xs text-gray-700">{r.orderId} \u2014 {r.customer}</div>
+                  <div className="font-mono text-xs text-gray-700">{r.orderId} — {r.customer}</div>
                   <div className={`text-xs ${r.ok ? 'text-gray-600' : 'text-red-700'} break-words`}>{r.message}</div>
                 </div>
               </li>
