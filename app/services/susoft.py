@@ -1784,15 +1784,18 @@ class SuSoftService:
         if not order.id:
             return False
         data: Optional[Dict[str, Any]] = None
-        try:
-            # Først: pushede ordre slås opp via alternativeId (= vår order.id)
-            data = self.get_order_by_alt_id(str(order.id))
-        except Exception as e:  # nosec - vi vil ikke at refresh-feil skal feile sync
-            logger.warning(
-                "Kunne ikke hente SuSoft-ordre %s for total-refresh (altId): %s",
-                order.id, e,
-            )
-            data = None
+        # Kun slå opp via altId hvis ordren faktisk er pushet til SuSoft.
+        # Ellers risikerer vi å hente en ukoblet SuSoft-ordre med samme
+        # alternativeId fra et annet miljø.
+        if order.susoft_order_id:
+            try:
+                data = self.get_order_by_alt_id(str(order.id))
+            except Exception as e:  # nosec
+                logger.warning(
+                    "Kunne ikke hente SuSoft-ordre %s for total-refresh (altId): %s",
+                    order.id, e,
+                )
+                data = None
 
         # Fallback for cart-importer (har bare susoft_uuid, ingen susoft_order_id):
         # hent admin-cart-detalj via UUID. Cart-linjer bruker samme felt-navn
