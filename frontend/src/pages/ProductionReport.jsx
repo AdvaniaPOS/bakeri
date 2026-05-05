@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { 
   Calendar, RefreshCw, ChevronLeft, ChevronRight, 
   Package, ClipboardList, Download, Users, Flame, Clock,
@@ -305,36 +305,37 @@ export default function ProductionReport() {
             {Object.keys(report.products_by_category || {}).length === 0 ? (
               <p className="text-gray-500 text-center py-12 text-sm">Ingen produkter å produsere denne dagen</p>
             ) : (
-              <div>
-                {Object.entries(report.products_by_category || {}).map(([category, products]) => (
-                  <div key={category}>
-                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
-                      <h3 className="text-xs uppercase tracking-wider font-semibold text-gray-700">{category}</h3>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="shop-table">
-                        <thead>
-                          <tr>
-                            <th>Produkt</th>
-                            <th className="text-right">Antall</th>
-                            <th className="text-right">Enhet</th>
+              <div className="overflow-x-auto">
+                <table className="shop-table">
+                  <thead>
+                    <tr>
+                      <th className="w-1/2">Produkt</th>
+                      <th className="text-right w-32">Antall</th>
+                      <th className="text-right w-24">Enhet</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(report.products_by_category || {}).map(([category, products]) => (
+                      <Fragment key={category}>
+                        <tr className="bg-gray-50">
+                          <td colSpan={3} className="px-4 py-1.5 text-xs uppercase tracking-wider font-semibold text-gray-700">
+                            {category}
+                            <span className="ml-2 text-gray-400 font-normal normal-case tracking-normal">({products.length})</span>
+                          </td>
+                        </tr>
+                        {products.map(product => (
+                          <tr key={`${category}-${product.product_id}`}>
+                            <td className="text-gray-900">{product.product_name}</td>
+                            <td className="text-right">
+                              <span className="text-lg font-semibold text-amber-700">{product.total_quantity}</span>
+                            </td>
+                            <td className="text-right text-gray-500">{product.unit}</td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {products.map(product => (
-                            <tr key={product.product_id}>
-                              <td className="text-gray-900">{product.product_name}</td>
-                              <td className="text-right">
-                                <span className="text-lg font-semibold text-amber-700">{product.total_quantity}</span>
-                              </td>
-                              <td className="text-right text-gray-500">{product.unit}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ))}
+                        ))}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
