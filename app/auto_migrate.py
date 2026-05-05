@@ -90,12 +90,18 @@ def _column_ddl(column, dialect) -> str:
     if not column.nullable and has_default:
         parts.append("NOT NULL")
 
+    is_postgres = dialect.name == "postgresql"
+
     if column.server_default is not None:
         parts.append(f"DEFAULT {column.server_default.arg}")
     elif column.default is not None and getattr(column.default, "is_scalar", False):
         v = column.default.arg
         if isinstance(v, bool):
-            v = 1 if v else 0
+            # Postgres krever ekte boolean-literal (TRUE/FALSE), ikke 0/1.
+            if is_postgres:
+                v = "TRUE" if v else "FALSE"
+            else:
+                v = 1 if v else 0
         elif isinstance(v, str):
             v = repr(v)
         parts.append(f"DEFAULT {v}")
