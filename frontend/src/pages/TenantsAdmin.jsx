@@ -255,7 +255,16 @@ export default function TenantsAdmin() {
       Object.keys(payload).forEach(k => { if (payload[k] === '') delete payload[k]; });
       const resp = await authFetch('/api/v1/admin/tenants', { method: 'POST', body: payload });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      if (!resp.ok) {
+        // Pydantic 422 returnerer detail som liste med {loc, msg, ...}
+        let msg;
+        if (Array.isArray(data?.detail)) {
+          msg = data.detail.map(d => `${(d.loc || []).slice(-1)[0] || ''}: ${d.msg}`).join('; ');
+        } else {
+          msg = data?.detail || `HTTP ${resp.status}`;
+        }
+        throw new Error(msg);
+      }
       setForm(EMPTY_FORM);
       setShowForm(false);
       loadTenants();
@@ -366,7 +375,7 @@ export default function TenantsAdmin() {
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Slug * <span className="text-xs text-gray-400">(a-z, 0-9, -)</span></label>
-              <input required pattern="[a-z0-9-]+" value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} className="input" />
+              <input required pattern="[a-z0-9\-]+" value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} className="input" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Juridisk navn</label>
