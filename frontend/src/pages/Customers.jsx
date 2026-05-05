@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Search, Plus, Building2, Phone, Mail, MapPin, RefreshCw, Edit2, X, Check, ClipboardList, AlertTriangle, CalendarClock, PlayCircle, PauseCircle, Eye, EyeOff, Store, UserPlus, Star, Trash2 } from 'lucide-react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
+import { Search, Plus, Building2, Phone, Mail, MapPin, RefreshCw, Edit2, X, Check, ClipboardList, AlertTriangle, CalendarClock, PlayCircle, PauseCircle, Eye, EyeOff, Store, UserPlus, Star, Trash2, ChevronRight, ChevronDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import QuickOverrideModal from '../components/QuickOverrideModal';
@@ -23,6 +23,9 @@ export default function Customers() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [expandedId, setExpandedId] = useState(null);
+
+  const toggleExpanded = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
   const fetchCustomers = async () => {
     setLoading(true);
@@ -264,9 +267,15 @@ export default function Customers() {
                 </tr>
               </thead>
               <tbody>
-                {pagedCustomers.map((customer) => (
-                  <tr key={customer.id} className={selectedIds.has(customer.id) ? 'bg-amber-50/50' : ''}>
-                    <td>
+                {pagedCustomers.map((customer) => {
+                  const isExpanded = expandedId === customer.id;
+                  return (
+                  <Fragment key={customer.id}>
+                  <tr
+                    className={`${selectedIds.has(customer.id) ? 'bg-amber-50/50' : ''} ${isExpanded ? 'bg-amber-50/30' : ''} cursor-pointer hover:bg-gray-50`}
+                    onClick={() => toggleExpanded(customer.id)}
+                  >
+                    <td onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={selectedIds.has(customer.id)}
@@ -276,6 +285,11 @@ export default function Customers() {
                     </td>
                     <td>
                       <div className="flex items-center gap-2.5">
+                        {isExpanded ? (
+                          <ChevronDown className="w-4 h-4 text-gray-400" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 text-gray-400" />
+                        )}
                         <div className="w-7 h-7 bg-amber-100 rounded flex items-center justify-center flex-shrink-0">
                           <Building2 className="w-4 h-4 text-amber-600" />
                         </div>
@@ -286,7 +300,7 @@ export default function Customers() {
                       <div className="text-gray-700">
                         {customer.contact_person && <div>{customer.contact_person}</div>}
                         {customer.email && (
-                          <a href={`mailto:${customer.email}`} className="text-xs text-amber-700 hover:underline">{customer.email}</a>
+                          <a href={`mailto:${customer.email}`} className="text-xs text-amber-700 hover:underline" onClick={(e) => e.stopPropagation()}>{customer.email}</a>
                         )}
                         {customer.phone && (
                           <div className="text-xs text-gray-500">{customer.phone}</div>
@@ -311,43 +325,8 @@ export default function Customers() {
                         {customer.is_active ? 'Aktiv' : 'Skjult'}
                       </span>
                     </td>
-                    <td>
+                    <td onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
-                        <Link
-                          to={`/maler/kunde/${customer.id}`}
-                          className="badge badge-amber hover:bg-amber-200"
-                          title="Fastbestilling (matrise)"
-                        >
-                          <ClipboardList className="w-3 h-3" /> Fastbestilling
-                        </Link>
-                        <button
-                          onClick={() => setPlanCustomer(customer)}
-                          className="badge bg-blue-100 text-blue-800 hover:bg-blue-200"
-                          title="Periodeplan"
-                        >
-                          <CalendarClock className="w-3 h-3" /> Plan
-                        </button>
-                        <button
-                          onClick={() => setOverrideCustomer(customer)}
-                          className="badge bg-orange-100 text-orange-800 hover:bg-orange-200"
-                          title="Registrer avvik"
-                        >
-                          <AlertTriangle className="w-3 h-3" /> Avvik
-                        </button>
-                        <button
-                          onClick={() => setPortalCustomer(customer)}
-                          className="badge bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
-                          title="Utsalg & portal-tilgang"
-                        >
-                          <Store className="w-3 h-3" /> Portal
-                        </button>
-                        <button
-                          onClick={() => setFavoritesCustomer(customer)}
-                          className="badge bg-amber-100 text-amber-800 hover:bg-amber-200"
-                          title="Favorittliste for portalen"
-                        >
-                          <Star className="w-3 h-3" /> Favoritter
-                        </button>
                         <button
                           onClick={() => setEditingCustomer(customer)}
                           className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded"
@@ -369,7 +348,54 @@ export default function Customers() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  {isExpanded && (
+                    <tr className="bg-amber-50/20">
+                      <td></td>
+                      <td colSpan={7} className="py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs uppercase tracking-wider text-gray-500 mr-2">Sett opp:</span>
+                          <Link
+                            to={`/maler/kunde/${customer.id}`}
+                            className="badge badge-amber hover:bg-amber-200"
+                            title="Fastbestilling (matrise)"
+                          >
+                            <ClipboardList className="w-3 h-3" /> Fastbestilling
+                          </Link>
+                          <button
+                            onClick={() => setPlanCustomer(customer)}
+                            className="badge bg-blue-100 text-blue-800 hover:bg-blue-200"
+                            title="Periodeplan"
+                          >
+                            <CalendarClock className="w-3 h-3" /> Plan
+                          </button>
+                          <button
+                            onClick={() => setOverrideCustomer(customer)}
+                            className="badge bg-orange-100 text-orange-800 hover:bg-orange-200"
+                            title="Registrer avvik"
+                          >
+                            <AlertTriangle className="w-3 h-3" /> Avvik
+                          </button>
+                          <button
+                            onClick={() => setPortalCustomer(customer)}
+                            className="badge bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                            title="Utsalg & portal-tilgang"
+                          >
+                            <Store className="w-3 h-3" /> Portal
+                          </button>
+                          <button
+                            onClick={() => setFavoritesCustomer(customer)}
+                            className="badge bg-amber-100 text-amber-800 hover:bg-amber-200"
+                            title="Favorittliste for portalen"
+                          >
+                            <Star className="w-3 h-3" /> Favoritter
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
             <Pagination
