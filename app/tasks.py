@@ -8,6 +8,7 @@ Tasks:
 - Alert email notifications
 """
 import os
+import logging
 from datetime import date, datetime, timedelta, time
 from celery import Celery
 from celery.schedules import crontab
@@ -15,6 +16,8 @@ from celery.schedules import crontab
 from .database import SessionLocal
 from .models import Order, Customer, SyncStatus
 from .time_utils import now_oslo, today_oslo, to_naive_utc, now_utc
+
+logger = logging.getLogger(__name__)
 
 # Configure Celery
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -99,14 +102,19 @@ celery_app.conf.beat_schedule = {
 def generate_orders_for_all_customers():
     """
     Generate orders from templates for all active customers.
-    
+
     Runs daily at 02:00.
     Generates orders for the configured lead time (14-30 days ahead).
+
+    Bruker `_generate_for_date` fra api.orders som er den autoritative
+    genererings-stien (samme som «Generer nå»-knappen og ensure-horizon).
+    Idempotent per (tenant, customer, date) takket være DB-unique-index
+    `uq_orders_template_customer_date`.
     """
     from sqlalchemy import select
     from .models import MasterTemplate
-    from .api.orders import generate_orders_from_template_sync
-    
+    from .api.orders import _generate_for_date
+
     db = SessionLocal()
     try:
         customers = db.execute(
@@ -115,42 +123,44 @@ def generate_orders_for_all_customers():
                 Customer.is_deleted == False
             )
         ).scalars().all()
-        
+
         results = {"customers_processed": 0, "orders_created": 0, "errors": 0}
-        
+
         for customer in customers:
             try:
-                # Get active template
+                # Hopp over kunder uten aktiv mal
                 template = db.execute(
                     select(MasterTemplate).where(
+                        MasterTemplate.tenant_id == customer.tenant_id,
                         MasterTemplate.customer_id == customer.id,
                         MasterTemplate.is_active == True
                     )
                 ).scalar_one_or_none()
-                
                 if not template:
                     continue
-                
-                # Calculate date range
+
                 from_date = today_oslo()
-                to_date = today_oslo() + timedelta(days=customer.order_lead_days)
-                
-                # Generate orders (using internal function)
-                order_ids = _generate_orders_sync(
-                    db, customer.id, template, from_date, to_date
-                )
-                
-                results["orders_created"] += len(order_ids)
+                to_date = today_oslo() + timedelta(days=int(customer.order_lead_days or 14))
+
+                created_for_cust = 0
+                d = from_date
+                while d <= to_date:
+                    res = _generate_for_date(db, customer.tenant_id, d, customer.id)
+                    created_for_cust += res.get("created_count", 0)
+                    d += timedelta(days=1)
+
+                results["orders_created"] += created_for_cust
                 results["customers_processed"] += 1
-                
+
             except Exception as e:
                 results["errors"] += 1
-                # Log error but continue with other customers
-                print(f"Error generating orders for customer {customer.id}: {e}")
-        
-        db.commit()
+                logger.exception(
+                    "Error generating orders for customer %s: %s",
+                    customer.id, e,
+                )
+
         return results
-        
+
     finally:
         db.close()
 

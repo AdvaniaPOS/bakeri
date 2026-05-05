@@ -59,6 +59,23 @@ _BACKFILL_DEFAULTS: dict[tuple[str, str], Any] = {
 }
 
 
+# Partial unique indexes som skal opprettes idempotent.
+# Format: index_name -> (table, sql_snippet_uten_create_index)
+#
+# MERK: Hvis det finnes duplikat-rader i tabellen ved oppstart vil
+# CREATE UNIQUE INDEX feile — da logges det og indeksen hoppes over slik
+# at appen fortsatt kan starte. Rydding må da gjøres manuelt.
+_PARTIAL_UNIQUE_INDEXES: dict[str, tuple[str, str]] = {
+    # Hindrer at to mal-genererte ordrer opprettes for samme
+    # (tenant, customer, delivery_date) ved race-conditions.
+    "uq_orders_template_customer_date": (
+        "orders",
+        "(tenant_id, customer_id, delivery_date) "
+        "WHERE is_deleted = false AND generated_from_template_id IS NOT NULL",
+    ),
+}
+
+
 def _column_ddl(column, dialect) -> str:
     """Bygg DDL-fragment for en SQLAlchemy-kolonne (uten constraints)."""
     col_type = column.type.compile(dialect=dialect)
@@ -152,6 +169,27 @@ def sync_schema(engine: Engine) -> dict[str, list[str]]:
                                 tn, cn, default, result.rowcount)
             except Exception as exc:  # noqa: BLE001
                 skipped.append(f"backfill {tn}.{cn}: {exc}")
+
+        # 4. Partial unique indexes (race-condition-vern). Idempotent via
+        #    IF NOT EXISTS — feil ved eksisterende dup-rader logges og
+        #    hoppes over slik at oppstart ikke knekker.
+        dialect_name = engine.dialect.name
+        if dialect_name in ("postgresql", "sqlite"):
+            existing_tables_after = set(inspect(conn).get_table_names())
+            for idx_name, (table, snippet) in _PARTIAL_UNIQUE_INDEXES.items():
+                if table not in existing_tables_after:
+                    continue
+                ddl = f"CREATE UNIQUE INDEX IF NOT EXISTS {idx_name} ON {table} {snippet}"
+                try:
+                    conn.execute(text(ddl))
+                    logger.info("auto_migrate: ensured unique index %s", idx_name)
+                except Exception as exc:  # noqa: BLE001
+                    skipped.append(f"index {idx_name}: {exc}")
+                    logger.warning(
+                        "auto_migrate: kunne ikke opprette unique index %s "
+                        "(sannsynligvis pga eksisterende dup-rader): %s",
+                        idx_name, exc,
+                    )
 
     return {"added": added, "skipped": skipped, "backfilled": backfilled}
 
