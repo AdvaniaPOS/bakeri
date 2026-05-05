@@ -248,7 +248,9 @@ def decode_token(token: str, expected_type: str = "access") -> Optional[TokenDat
         role = payload.get("role")
         email = payload.get("email")
         
-        if not all([user_id, tenant_id, role, email]):
+        # NB: tenant_id kan vaere 0 (SUPER_ADMIN uten tenant), saa
+        # bruk eksplisitt None-sjekk istedenfor `not all([...])`.
+        if user_id is None or tenant_id is None or not role or not email:
             return None
         
         return TokenData(
