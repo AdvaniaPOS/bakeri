@@ -645,7 +645,7 @@ def _generate_order_confirmation_pdf(db: Session, order_id: int, tenant: Tenant)
         "order": {
             "id": order.id,
             "delivery_date": order.delivery_date,
-            "notes": order.notes,
+            "notes": order.customer_notes or order.internal_notes,
             "order_no_display": order.order_no_display,
             "reference": order.reference,
         },
