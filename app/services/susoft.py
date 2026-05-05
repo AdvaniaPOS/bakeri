@@ -1831,9 +1831,46 @@ class SuSoftService:
         for ln in lines:
             if not isinstance(ln, dict):
                 continue
-            excl += _dec(ln.get("netTotal"))
-            vat += _dec(ln.get("vatAmount"))
-            incl += _dec(ln.get("total"))
+            qty = _dec(ln.get("qty") or ln.get("qtyOrdered") or ln.get("quantity") or "1")
+
+            # SuSoft har to skjemaer som varierer per endepunkt:
+            #   admin /cart/{id}        : netTotal, vatAmount, total
+            #   /shopping-cart/uuid     : (netTotal mangler), lineTaxAmount, lineTotal,
+            #                              priceInclTax (per stk), price (per stk net)
+            # Vi prioriterer eksplisitte felt for incl-totalen og MVA, og utleder
+            # excl = incl - vat for å være konsistent.
+            line_incl = _dec(
+                ln.get("total")
+                or ln.get("lineTotal")
+                or (qty * _dec(ln.get("priceInclTax"))
+                    if ln.get("priceInclTax") is not None else None)
+            )
+            line_vat = _dec(
+                ln.get("vatAmount")
+                or ln.get("lineTaxAmount")
+            )
+            line_excl_raw = _dec(ln.get("netTotal"))
+            if line_incl == 0 and line_excl_raw == 0:
+                # Siste fallback: qty * price (cart-skjema: price er ekskl. mva)
+                if ln.get("price") is not None:
+                    line_excl_raw = qty * _dec(ln.get("price"))
+                    if line_vat == 0 and ln.get("lineTaxPercent") is not None:
+                        line_vat = (line_excl_raw * _dec(ln.get("lineTaxPercent")) / _D("100"))
+                    line_incl = line_excl_raw + line_vat
+
+            if line_excl_raw != 0:
+                line_excl = line_excl_raw
+            else:
+                line_excl = line_incl - line_vat
+
+            excl += line_excl
+            vat += line_vat
+            incl += line_incl
+
+        # Kvantiser til 2 desimaler (samme presisjon som DB-kolonner)
+        excl = excl.quantize(_D("0.01"))
+        vat = vat.quantize(_D("0.01"))
+        incl = incl.quantize(_D("0.01"))
 
         if incl == 0 and excl == 0 and vat == 0:
             return False
