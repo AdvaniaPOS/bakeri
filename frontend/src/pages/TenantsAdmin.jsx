@@ -452,6 +452,7 @@ export default function TenantsAdmin() {
                   <th>E-post</th>
                   <th>Plan</th>
                   <th>Brukere</th>
+                  <th>SuSoft URL</th>
                   <th>SuSoft</th>
                   <th>Lås</th>
                   <th>Status</th>
@@ -467,6 +468,16 @@ export default function TenantsAdmin() {
                     <td className="text-gray-600">{t.email || '—'}</td>
                     <td className="text-xs text-gray-600">{t.subscription_plan || '—'} / {t.subscription_status || '—'}</td>
                     <td>{t.user_count}</td>
+                    <td className="text-xs text-gray-600" title={t.susoft_api_url || ''}>
+                      <div className="font-mono truncate max-w-[180px]">{t.susoft_api_url || '—'}</div>
+                      {(t.susoft_shop_url_key || t.susoft_login) && (
+                        <div className="text-[10px] text-gray-400">
+                          {t.susoft_shop_url_key && <span>shop: <span className="font-mono">{t.susoft_shop_url_key}</span></span>}
+                          {t.susoft_shop_url_key && t.susoft_login && ' · '}
+                          {t.susoft_login && <span>{t.susoft_login}</span>}
+                        </div>
+                      )}
+                    </td>
                     <td>
                       {t.susoft_connection_status === 'ok' ? (
                         <span className="badge badge-success"><CheckCircle className="w-3 h-3" /> ok</span>
