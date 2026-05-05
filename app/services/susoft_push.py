@@ -137,17 +137,21 @@ def _build_put_payload(
     Lag PUT-payload ved å patche `base_payload` (fersk fra SuSoft) med
     lokale verdier.
 
-    Hvis `promote_to_order=True`, settes `type="ORDER"` og
-    `statusName="CONFIRMED"` slik at SuSoft flytter ordren fra CART til
-    "klar for fakturering"-lista. Brukes når vi fakturerer en cart-import.
+    Hvis `promote_to_order=True`, settes numerisk `status=3` slik at SuSoft
+    flytter ordren fra "Ikke startet" (status=0) til "klar for fakturering"-
+    lista. SuSoft beholder `type="CART"` for webshop-ordrer — det er
+    `status`-feltet som styrer faktureringsstatus. Brukes når vi fakturerer
+    en cart-import.
     """
     payload = dict(base_payload)  # shallow copy — vi erstatter top-level felt
 
     if promote_to_order:
-        payload["type"] = "ORDER"
-        payload["statusName"] = "CONFIRMED"
-        # Fjern numerisk `status=0` (cart-state) slik at SuSoft ikke overstyrer.
-        payload.pop("status", None)
+        # Behold type="CART"; sett numerisk status=3 ("klar for fakturering").
+        # Tidligere prøvde vi type=ORDER + statusName=CONFIRMED, men SuSoft
+        # avviste dette ("Modified lines are required") og faktiske
+        # invoice-ready ordre i admin-panelet har type=CART, status=3.
+        payload["status"] = 3
+        payload.pop("statusName", None)
 
     # Datoer
     if order.susoft_delivery_at is not None:
