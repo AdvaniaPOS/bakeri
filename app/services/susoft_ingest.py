@@ -218,14 +218,57 @@ def ingest_susoft_orders_for_tenant(
                 logger.debug("Hopper over SuSoft-rad uten uuid (orderNo=%s)", row.get("orderNo"))
                 continue
             uuid_str = str(uuid_val)
+            order_no_str = str(row.get("orderNo") or "") or None
+            alt_id_raw = row.get("alternativeId")
+            alt_id_int: Optional[int] = None
+            if alt_id_raw not in (None, ""):
+                try:
+                    alt_id_int = int(str(alt_id_raw).strip())
+                except (TypeError, ValueError):
+                    alt_id_int = None
 
-            existing = db.execute(
+            # Dedup-strategi:
+            # 1) Match på susoft_uuid (vanlig pull-flow).
+            # 2) Match på alternativeId == lokal Order.id — denne raden er
+            #    SuSoft sin projeksjon av en ordre VI sendte opp (typisk
+            #    fra cart→invoice-flyten der vi POST'er /order). Da skal
+            #    vi linke, ikke opprette duplikat.
+            # 3) Match på susoft_order_id == orderNo (fallback hvis altId
+            #    mangler men vi har stemplet orderNo lokalt).
+            existing_order: Optional[Order] = None
+            existing_id = db.execute(
                 select(Order.id).where(
                     Order.tenant_id == tenant_id,
                     Order.susoft_uuid == uuid_str,
                 )
             ).scalar_one_or_none()
-            if existing:
+            if existing_id:
+                summary["skipped_existing"] += 1
+                continue
+
+            if alt_id_int is not None:
+                existing_order = db.execute(
+                    select(Order).where(
+                        Order.tenant_id == tenant_id,
+                        Order.id == alt_id_int,
+                    )
+                ).scalar_one_or_none()
+            if existing_order is None and order_no_str:
+                existing_order = db.execute(
+                    select(Order).where(
+                        Order.tenant_id == tenant_id,
+                        Order.susoft_order_id == order_no_str,
+                    )
+                ).scalar_one_or_none()
+            if existing_order is not None:
+                # Link projeksjonen til den lokale ordren (idempotent stempling).
+                if not existing_order.susoft_uuid:
+                    existing_order.susoft_uuid = uuid_str
+                if order_no_str and not existing_order.susoft_order_no:
+                    existing_order.susoft_order_no = order_no_str[:100]
+                if order_no_str and not existing_order.susoft_order_id:
+                    existing_order.susoft_order_id = order_no_str
+                db.commit()
                 summary["skipped_existing"] += 1
                 continue
 
