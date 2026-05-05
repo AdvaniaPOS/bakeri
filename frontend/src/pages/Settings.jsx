@@ -898,7 +898,9 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Admin-API ("API 2") - aPOS-CART-er */}
+          {/* Admin-API ("API 2") - aPOS-CART-er — DEAKTIVERT
+              Henting av ordrer/CART-er fra SuSoft er fjernet. */}
+          {false && (
           <div className="mb-6 p-4 border border-purple-200 bg-purple-50 rounded-lg">
             <div className="mb-3">
               <h3 className="text-sm font-semibold text-purple-900">Admin-API (aPOS-CART-er)</h3>
@@ -996,6 +998,7 @@ export default function Settings() {
               </div>
             </div>
           </div>
+          )}
 
           {/* Sync Buttons */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
