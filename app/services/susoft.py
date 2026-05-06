@@ -47,6 +47,59 @@ from ..models import (
 logger = logging.getLogger(__name__)
 
 
+# Felter i SyncLog.request_payload som skal redigeres f\u00f8r persistering.
+# Kombinerer SuSoft-kredentialer (token, password) og PII (telefon, e-post,
+# adresser, fri-tekst med kundeinfo). Match er case-insensitive p\u00e5 n\u00f8kkelnavn.
+_REDACT_KEYS = {
+    "password", "token", "access_token", "refresh_token",
+    "authorization", "auth", "apikey", "api_key", "secret",
+    "phone", "telephone", "mobile",
+    "email", "e_mail",
+    "address", "street", "city", "zip", "postal", "postcode",
+    "personalidentificationnumber", "ssn",
+    "comment", "comments", "note", "notes",
+    "deliverynote", "deliverycomment",
+}
+
+
+def _redact_payload(payload):
+    """Returner en redusert kopi av `payload`. Sensitive felter erstattes med '[REDACTED]'."""
+    if isinstance(payload, dict):
+        out = {}
+        for k, v in payload.items():
+            if isinstance(k, str) and k.lower() in _REDACT_KEYS:
+                out[k] = "[REDACTED]"
+            else:
+                out[k] = _redact_payload(v)
+        return out
+    if isinstance(payload, list):
+        return [_redact_payload(v) for v in payload]
+    return payload
+
+
+def _truncate_text(text, limit: int):
+    if not text:
+        return text
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...[TRUNCATED]"
+
+
+def _alternative_id_for_order(order: Order) -> str:
+    """
+    Bygg `alternativeId` for SuSoft-ordrer.
+
+    Bruker tenant-prefiks (f.eks. ``"t1-o42"``) slik at flere tenants som
+    deler samme SuSoft-konto ikke kolliderer p\u00e5 lokale ordre-IDer. For
+    bakoverkompatibilitet pr\u00f8ver `create_order` ogs\u00e5 \u00e5 matche legacy
+    ``str(order.id)`` ved idempotency-sjekk.
+    """
+    tenant_id = getattr(order, "tenant_id", None)
+    if tenant_id is None:
+        return str(order.id)
+    return f"t{tenant_id}-o{order.id}"
+
+
 def _format_allergens(raw) -> Optional[str]:
     """Konverter SuSoft allergen-array (liste av {id,name}) til komma-separert tekst."""
     if not raw or not isinstance(raw, list):
@@ -762,6 +815,12 @@ class SuSoftService:
         """Log sync attempt to database."""
         self._ensure_tenant_available()
 
+        # Redaker request_payload f\u00f8r persistering. SyncLog leses av admins
+        # gjennom support-grensesnittet og skal ikke eksponere SuSoft-kredentialer
+        # eller fri-tekst med PII (kundenavn, telefon, e-post osv).
+        safe_request = _redact_payload(request_payload) if request_payload else None
+        safe_response = _truncate_text(response_body, 4000)
+
         log = SyncLog(
             tenant_id=self.tenant_id,
             sync_type=sync_type,
@@ -769,9 +828,9 @@ class SuSoftService:
             entity_id=entity_id,
             http_method=method,
             endpoint=endpoint,
-            request_payload=request_payload,
+            request_payload=safe_request,
             response_status_code=response_status,
-            response_body=response_body,
+            response_body=safe_response,
             was_successful=success,
             error_message=error_message,
             attempt_number=attempt_number,
@@ -1389,9 +1448,16 @@ class SuSoftService:
             raise SuSoftAPIError("Customer has no SuSoft ID")
 
         # IDEMPOTENS: Sjekk om SuSoft allerede har denne ordren
-        # (kan skje ved retry hvis forrige POST kom frem men svaret gikk tapt)
+        # (kan skje ved retry hvis forrige POST kom frem men svaret gikk tapt).
+        # Vi prøver å matche på ny tenant-prefikset altId først, og fallback
+        # til legacy str(order.id) for å fange ordrer opprettet før prefiksen
+        # ble inført.
+        alt_id = _alternative_id_for_order(order)
+        legacy_alt_id = str(order.id)
         try:
-            existing = self.get_order_by_alt_id(str(order.id))
+            existing = self.get_order_by_alt_id(alt_id) or (
+                self.get_order_by_alt_id(legacy_alt_id) if legacy_alt_id != alt_id else None
+            )
             if existing:
                 existing_id = str(
                     existing.get("orderNo")
@@ -1423,8 +1489,9 @@ class SuSoftService:
         # Build order payload according to SuSoft Swagger spec
         # See /order POST endpoint definition
         payload = {
-            # alternativeId links back to our system
-            "alternativeId": str(order.id),
+            # alternativeId links back to our system (tenant-prefikset for
+            # multi-tenant kollisjons-trygghet).
+            "alternativeId": alt_id,
             # Customer reference (SuSoft Customer object with just id)
             "customer": {
                 "id": order.customer.susoft_customer_id
@@ -1637,8 +1704,8 @@ class SuSoftService:
             except (TypeError, ValueError):
                 order_ref = {"orderNo": str(susoft_order_no)}
         elif order.susoft_order_id:
-            # Vår lokale id matcher altId vi sendte i create_order
-            order_ref = {"alternativeId": str(order.id)}
+            # V\u00e5r lokale id matcher altId vi sendte i create_order
+            order_ref = {"alternativeId": _alternative_id_for_order(order)}
         elif admin_alt_id:
             order_ref = {"alternativeId": str(admin_alt_id)}
         elif order.susoft_uuid:

@@ -76,8 +76,21 @@ def is_blocked_date(db: Session, customer_id: int, target_date: date, tenant_id:
 
 
 def _trigger_sync(order_id: int):
+    """
+    K\u00f8 SuSoft-sync av en ordre. NB: hopper over DRAFT \u2014 mal-genererte ordrer
+    skal IKKE pushes f\u00f8r de er manuelt bekreftet.
+    """
     try:
+        from ..database import SessionLocal
         from ..tasks import sync_order
+        # Sjekk status f\u00f8rst slik at vi ikke pusher DRAFT.
+        s = SessionLocal()
+        try:
+            order = s.get(Order, order_id)
+            if not order or order.status == OrderStatus.DRAFT:
+                return
+        finally:
+            s.close()
         sync_order.delay(order_id)
     except Exception:
         pass
@@ -92,7 +105,12 @@ def _sync_order_inline(db: Session, order: Order) -> None:
     of relying on the 5-minute sweep job.
 
     Errors are caught and stored on the order; the request still succeeds.
+
+    NB: hopper over DRAFT \u2014 mal-genererte ordrer skal IKKE pushes
+    f\u00f8r de er manuelt bekreftet.
     """
+    if order.status == OrderStatus.DRAFT:
+        return
     from ..services.susoft import SuSoftService, SuSoftAPIError
     try:
         service = SuSoftService(db, tenant_id=order.tenant_id)

@@ -109,6 +109,7 @@ class TokenData(BaseModel):
     tenant_id: int
     role: str
     email: str
+    issued_at: Optional[datetime] = None  # JWT `iat` claim, brukes til denylist-sjekk
 
 
 # =============================================================================
@@ -252,12 +253,25 @@ def decode_token(token: str, expected_type: str = "access") -> Optional[TokenDat
         # bruk eksplisitt None-sjekk istedenfor `not all([...])`.
         if user_id is None or tenant_id is None or not role or not email:
             return None
-        
+
+        # Plukk ut iat (JWT-spec: sekunder siden epoch). Brukes til å
+        # avvise tokens utstedt før en bruker logget ut.
+        iat_raw = payload.get("iat")
+        issued_at: Optional[datetime] = None
+        if isinstance(iat_raw, (int, float)):
+            try:
+                issued_at = datetime.utcfromtimestamp(iat_raw)
+            except (OverflowError, OSError, ValueError):
+                issued_at = None
+        elif isinstance(iat_raw, datetime):
+            issued_at = iat_raw
+
         return TokenData(
             user_id=user_id,
             tenant_id=tenant_id,
             role=role,
-            email=email
+            email=email,
+            issued_at=issued_at,
         )
         
     except (JWTError, ValueError, TypeError):

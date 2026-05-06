@@ -428,14 +428,27 @@ async def logout(
     db: Session = Depends(get_db)
 ):
     """
-    Logout user by invalidating all refresh tokens.
+    Logout user by invalidating all refresh tokens AND access tokens.
+
+    Setter `tokens_invalidated_at = now` p\u00e5 brukeren slik at alle JWT-tokens
+    utstedt f\u00f8r dette tidspunktet (b\u00e5de access og refresh) avvises av
+    `get_current_user`. Dette gir en ekte server-side logout selv om vi har
+    stateless JWTs.
     """
+    now = datetime.utcnow()
     db.query(RefreshToken).filter(
         RefreshToken.user_id == current_user.id,
         RefreshToken.is_revoked == False
-    ).update({"is_revoked": True, "revoked_at": datetime.utcnow()})
+    ).update({"is_revoked": True, "revoked_at": now})
+
+    # Trekk en fersk DB-instans for \u00e5 unng\u00e5 \u00e5 trampe p\u00e5 expunged kopier
+    # (f.eks. ved SUPER_ADMIN-impersonering).
+    fresh = db.get(User, current_user.id)
+    if fresh is not None:
+        fresh.tokens_invalidated_at = now
+
     db.commit()
-    
+
     return {"message": "Successfully logged out"}
 
 

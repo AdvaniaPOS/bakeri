@@ -22,6 +22,7 @@ from ..auth import get_password_hash
 from ..dependencies import get_current_user, get_current_tenant, require_role
 from ..crypto_utils import encrypt_secret
 from ..email_utils import send_tenant_welcome
+from ..time_utils import now_utc, to_naive_utc
 from ..models import (
     Order, Holiday, CustomerBlockedDate, AdminAlert, AuditLog,
     OrderStatus, SyncStatus, AuditAction
@@ -45,7 +46,9 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 async def panic_cancel_orders(
     request: PanicCancelRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
 ):
     """
     PANIC BUTTON: Batch cancel all orders for a specific date.
@@ -59,6 +62,7 @@ async def panic_cancel_orders(
     4. Send admin alerts
     """
     query = select(Order).where(
+        Order.tenant_id == tenant.id,
         Order.delivery_date == request.target_date,
         Order.is_deleted == False,
         Order.status.notin_([OrderStatus.CANCELLED, OrderStatus.DELIVERED])
@@ -77,7 +81,7 @@ async def panic_cancel_orders(
         try:
             order.status = OrderStatus.CANCELLED
             order.is_deleted = True
-            order.deleted_at = datetime.utcnow()
+            order.deleted_at = to_naive_utc(now_utc())
             order.deletion_reason = f"PANIC CANCEL: {request.reason}"
             
             if order.susoft_order_id:
@@ -90,6 +94,8 @@ async def panic_cancel_orders(
     
     # Create master audit log for panic operation
     audit = AuditLog(
+        tenant_id=tenant.id,
+        user_id=current_user.id,
         entity_type="panic_cancel",
         entity_id=0,  # Special ID for batch operations
         action=AuditAction.PANIC_CANCEL,
@@ -104,6 +110,7 @@ async def panic_cancel_orders(
     
     # Create admin alert
     alert = AdminAlert(
+        tenant_id=tenant.id,
         alert_type="panic_cancel",
         severity="critical",
         title=f"PANIC CANCEL: {request.target_date}",
@@ -132,7 +139,9 @@ async def panic_cancel_orders(
 @router.post("/emergency-lock/{target_date}")
 async def emergency_lock_orders(
     target_date: date,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
 ):
     """
     Emergency lock all orders for a date.
@@ -140,6 +149,7 @@ async def emergency_lock_orders(
     """
     orders = db.execute(
         select(Order).where(
+            Order.tenant_id == tenant.id,
             Order.delivery_date == target_date,
             Order.is_deleted == False,
             Order.is_locked == False
@@ -148,7 +158,7 @@ async def emergency_lock_orders(
     
     for order in orders:
         order.is_locked = True
-        order.locked_at = datetime.utcnow()
+        order.locked_at = to_naive_utc(now_utc())
     
     db.commit()
     
@@ -162,12 +172,14 @@ async def emergency_lock_orders(
 @router.get("/holidays", response_model=List[HolidayResponse])
 async def list_holidays(
     year: Optional[int] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER, UserRole.DRIVER, UserRole.VIEWER)),
 ):
     """
     List all holidays.
     """
-    query = select(Holiday).order_by(Holiday.holiday_date)
+    query = select(Holiday).where(Holiday.tenant_id == tenant.id).order_by(Holiday.holiday_date)
     
     if year:
         query = query.where(Holiday.year == year)
@@ -179,15 +191,20 @@ async def list_holidays(
 @router.post("/holidays", response_model=HolidayResponse, status_code=status.HTTP_201_CREATED)
 async def create_holiday(
     data: HolidayCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
 ):
     """
     Add a new holiday.
     Orders on this date will automatically have quantity = 0.
     """
-    # Check for duplicate
+    # Check for duplicate (per tenant)
     existing = db.execute(
-        select(Holiday).where(Holiday.holiday_date == data.holiday_date)
+        select(Holiday).where(
+            Holiday.tenant_id == tenant.id,
+            Holiday.holiday_date == data.holiday_date,
+        )
     ).scalar_one_or_none()
     
     if existing:
@@ -196,7 +213,7 @@ async def create_holiday(
             detail="Holiday already exists for this date"
         )
     
-    holiday = Holiday(**data.model_dump())
+    holiday = Holiday(tenant_id=tenant.id, **data.model_dump())
     db.add(holiday)
     db.commit()
     db.refresh(holiday)
@@ -207,13 +224,15 @@ async def create_holiday(
 @router.delete("/holidays/{holiday_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_holiday(
     holiday_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
 ):
     """
     Remove a holiday.
     """
     holiday = db.get(Holiday, holiday_id)
-    if not holiday:
+    if not holiday or holiday.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Holiday not found")
     
     db.delete(holiday)
@@ -223,32 +242,48 @@ async def delete_holiday(
 @router.post("/holidays/populate-norwegian/{year}")
 async def populate_norwegian_holidays(
     year: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)),
 ):
     """
     Populate Norwegian public holidays for a given year.
+
+    Bruker `app.holidays_no` for autoritativ liste (inkludert påske, Kristi
+    himmelfart, pinse, jule-/påskeaften — beregnet via Anonymous Gregorian).
     """
-    # Norwegian public holidays
+    from ..holidays_no import _easter_sunday
+
+    easter = _easter_sunday(year)
     holidays_data = [
         (date(year, 1, 1), "Nyttårsdag"),
+        (easter - timedelta(days=3), "Skjærtorsdag"),
+        (easter - timedelta(days=2), "Langfredag"),
+        (easter - timedelta(days=1), "Påskeaften"),
+        (easter, "1. påskedag"),
+        (easter + timedelta(days=1), "2. påskedag"),
         (date(year, 5, 1), "Arbeidernes dag"),
         (date(year, 5, 17), "Grunnlovsdag"),
+        (easter + timedelta(days=39), "Kristi himmelfartsdag"),
+        (easter + timedelta(days=49), "1. pinsedag"),
+        (easter + timedelta(days=50), "2. pinsedag"),
+        (date(year, 12, 24), "Julaften"),
         (date(year, 12, 25), "1. juledag"),
         (date(year, 12, 26), "2. juledag"),
     ]
-    
-    # Easter-dependent holidays (would need proper calculation)
-    # For now, skip as they require complex date calculation
-    # Easter, Maundy Thursday, Good Friday, Easter Monday, Ascension Day, Whit Sunday, Whit Monday
-    
+
     created = 0
     for holiday_date, name in holidays_data:
         existing = db.execute(
-            select(Holiday).where(Holiday.holiday_date == holiday_date)
+            select(Holiday).where(
+                Holiday.tenant_id == tenant.id,
+                Holiday.holiday_date == holiday_date,
+            )
         ).scalar_one_or_none()
-        
+
         if not existing:
             holiday = Holiday(
+                tenant_id=tenant.id,
                 holiday_date=holiday_date,
                 name=name,
                 year=year,
@@ -256,9 +291,9 @@ async def populate_norwegian_holidays(
             )
             db.add(holiday)
             created += 1
-    
+
     db.commit()
-    
+
     return {"message": f"Created {created} holidays for {year}"}
 
 
@@ -270,12 +305,14 @@ async def populate_norwegian_holidays(
 async def list_blocked_dates(
     customer_id: Optional[int] = None,
     from_date: Optional[date] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER, UserRole.DRIVER, UserRole.VIEWER)),
 ):
     """
     List customer-specific blocked date ranges.
     """
-    query = select(CustomerBlockedDate)
+    query = select(CustomerBlockedDate).where(CustomerBlockedDate.tenant_id == tenant.id)
     
     if customer_id:
         query = query.where(CustomerBlockedDate.customer_id == customer_id)
@@ -292,7 +329,9 @@ async def list_blocked_dates(
 @router.post("/blocked-dates", response_model=CustomerBlockedDateResponse, status_code=status.HTTP_201_CREATED)
 async def create_blocked_date(
     data: CustomerBlockedDateCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER)),
 ):
     """
     Block a date range for a customer (e.g., summer holidays).
@@ -300,10 +339,10 @@ async def create_blocked_date(
     from ..models import Customer
     
     customer = db.get(Customer, data.customer_id)
-    if not customer or customer.is_deleted:
+    if not customer or customer.is_deleted or customer.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Customer not found")
     
-    blocked = CustomerBlockedDate(**data.model_dump())
+    blocked = CustomerBlockedDate(tenant_id=tenant.id, **data.model_dump())
     db.add(blocked)
     db.commit()
     db.refresh(blocked)
@@ -314,13 +353,15 @@ async def create_blocked_date(
 @router.delete("/blocked-dates/{blocked_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_blocked_date(
     blocked_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER)),
 ):
     """
     Remove a blocked date range.
     """
     blocked = db.get(CustomerBlockedDate, blocked_id)
-    if not blocked:
+    if not blocked or blocked.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Blocked date not found")
     
     db.delete(blocked)
@@ -337,12 +378,14 @@ async def list_alerts(
     is_resolved: Optional[bool] = None,
     severity: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER)),
 ):
     """
-    List admin alerts.
+    List admin alerts (tenant-scoped).
     """
-    query = select(AdminAlert)
+    query = select(AdminAlert).where(AdminAlert.tenant_id == tenant.id)
     
     if is_read is not None:
         query = query.where(AdminAlert.is_read == is_read)
@@ -360,15 +403,19 @@ async def list_alerts(
 
 
 @router.get("/alerts/unread-count")
-async def get_unread_alert_count(db: Session = Depends(get_db)):
+async def get_unread_alert_count(
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER)),
+):
     """
-    Get count of unread alerts by severity.
+    Get count of unread alerts by severity (tenant-scoped).
     """
     from sqlalchemy import func
     
     result = db.execute(
         select(AdminAlert.severity, func.count(AdminAlert.id))
-        .where(AdminAlert.is_read == False)
+        .where(AdminAlert.tenant_id == tenant.id, AdminAlert.is_read == False)
         .group_by(AdminAlert.severity)
     ).all()
     
@@ -379,21 +426,26 @@ async def get_unread_alert_count(db: Session = Depends(get_db)):
 async def acknowledge_alert(
     alert_id: int,
     data: AdminAlertAcknowledge,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER)),
 ):
     """
     Mark an alert as read or resolved.
     """
+    from ..time_utils import now_utc, to_naive_utc
+
     alert = db.get(AdminAlert, alert_id)
-    if not alert:
+    if not alert or alert.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Alert not found")
     
+    now_naive = to_naive_utc(now_utc())
     alert.is_read = True
-    alert.read_at = datetime.utcnow()
+    alert.read_at = now_naive
     
     if data.resolved:
         alert.is_resolved = True
-        alert.resolved_at = datetime.utcnow()
+        alert.resolved_at = now_naive
         alert.resolution_notes = data.resolution_notes
     
     db.commit()
@@ -402,17 +454,27 @@ async def acknowledge_alert(
 
 
 @router.post("/alerts/mark-all-read")
-async def mark_all_alerts_read(db: Session = Depends(get_db)):
+async def mark_all_alerts_read(
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER)),
+):
     """
-    Mark all unread alerts as read.
+    Mark all unread alerts as read (tenant-scoped).
     """
+    from ..time_utils import now_utc, to_naive_utc
+
     alerts = db.execute(
-        select(AdminAlert).where(AdminAlert.is_read == False)
+        select(AdminAlert).where(
+            AdminAlert.tenant_id == tenant.id,
+            AdminAlert.is_read == False,
+        )
     ).scalars().all()
     
+    now_naive = to_naive_utc(now_utc())
     for alert in alerts:
         alert.is_read = True
-        alert.read_at = datetime.utcnow()
+        alert.read_at = now_naive
     
     db.commit()
     
@@ -507,30 +569,39 @@ async def list_deletion_logs(
 # =============================================================================
 
 @router.get("/status")
-async def get_system_status(db: Session = Depends(get_db)):
+async def get_system_status(
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.MANAGER)),
+):
     """
     Get system health status and key metrics.
     """
     from sqlalchemy import func
+    from ..time_utils import now_utc
     
     # Count orders by sync status
     sync_counts = db.execute(
         select(Order.sync_status, func.count(Order.id))
-        .where(Order.is_deleted == False)
+        .where(Order.tenant_id == tenant.id, Order.is_deleted == False)
         .group_by(Order.sync_status)
     ).all()
     
     # Count pending alerts
     alert_count = db.execute(
         select(func.count(AdminAlert.id))
-        .where(AdminAlert.is_resolved == False)
+        .where(AdminAlert.tenant_id == tenant.id, AdminAlert.is_resolved == False)
     ).scalar()
     
     # Orders for today
     today = date.today()
     today_orders = db.execute(
         select(func.count(Order.id))
-        .where(Order.delivery_date == today, Order.is_deleted == False)
+        .where(
+            Order.tenant_id == tenant.id,
+            Order.delivery_date == today,
+            Order.is_deleted == False,
+        )
     ).scalar()
     
     return {
@@ -538,7 +609,7 @@ async def get_system_status(db: Session = Depends(get_db)):
         "sync_status_counts": {status.value: count for status, count in sync_counts},
         "pending_alerts": alert_count,
         "orders_today": today_orders,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": now_utc().isoformat()
     }
 
 
@@ -1234,11 +1305,23 @@ async def impersonate_tenant(
     if not target_tenant or not target_tenant.is_active:
         raise HTTPException(status_code=404, detail="Tenant ikke funnet eller inaktiv")
 
+    # Re-valider current_user fra DB. Selv om dependencien Depends(require_role(SUPER_ADMIN))
+    # kaller get_current_user, beskytter dette mot at en super-admin er degradert
+    # eller deaktivert mens et access-token fortsatt er gyldig.
+    fresh_user = db.get(User, current_user.id)
+    if (
+        not fresh_user
+        or not fresh_user.is_active
+        or fresh_user.is_deleted
+        or fresh_user.role != UserRole.SUPER_ADMIN
+    ):
+        raise HTTPException(status_code=403, detail="Brukeren har ikke tilgang til \u00e5 impersonere")
+
     tokens = create_token_pair(
-        user_id=current_user.id,
+        user_id=fresh_user.id,
         tenant_id=target_tenant.id,
-        role=current_user.role.value,
-        email=current_user.email,
+        role=fresh_user.role.value,
+        email=fresh_user.email,
     )
     return {
         "access_token": tokens.access_token,
@@ -1293,14 +1376,14 @@ async def delete_tenant(
     # Soft delete
     tenant.is_active = False
     tenant.is_deleted = True
-    tenant.deleted_at = datetime.utcnow()
+    tenant.deleted_at = to_naive_utc(now_utc())
     tenant.subscription_status = SubscriptionStatus.CANCELLED
     db.commit()
     return {
         "deleted": True,
         "hard": False,
         "tenant_id": tenant_id,
-        "restore_until": (datetime.utcnow() + timedelta(days=30)).isoformat(),
+        "restore_until": (now_utc() + timedelta(days=30)).isoformat(),
     }
 
 

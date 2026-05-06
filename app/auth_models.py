@@ -274,6 +274,13 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # Token-denylist: alle access/refresh-tokens utstedt f\u00f8r dette tidspunktet
+    # er ugyldige. Settes ved logout og tvunget-logout fra admin.
+    tokens_invalidated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+        comment="Tokens utstedt (iat) f\u00f8r dette tidspunktet avvises som ugyldige."
+    )
+
     # 2FA (TOTP)
     totp_secret: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True,

@@ -83,7 +83,17 @@ async def get_current_user(
     
     if not user:
         raise credentials_exception
-    
+
+    # Token-denylist: hvis brukeren har logget ut etter at dette tokenet ble
+    # utstedt, avvis det. `tokens_invalidated_at` settes ved logout og av
+    # admin ved tvunget-logout.
+    if (
+        user.tokens_invalidated_at is not None
+        and token_data.issued_at is not None
+        and token_data.issued_at < user.tokens_invalidated_at
+    ):
+        raise credentials_exception
+
     # Update last login
     user.last_login_at = datetime.utcnow()
     db.commit()

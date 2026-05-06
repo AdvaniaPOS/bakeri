@@ -14,7 +14,7 @@ from ..dependencies import get_current_tenant
 from ..auth_models import Tenant
 from ..models import (
     CustomerProductPrice, Customer, Product, Order, OrderLine,
-    AuditLog, AuditAction, SyncStatus
+    AuditLog, AuditAction, SyncStatus, OrderStatus
 )
 from ..schemas import (
     CustomerProductPriceCreate, CustomerProductPriceUpdate,
@@ -351,7 +351,12 @@ async def propagate_price_change(
             try:
                 from ..tasks import sync_order
                 for order_id in orders_needing_resync:
-                    sync_order.delay(order_id)
+                    # Defense-in-depth: _trigger_sync sjekker DRAFT, men
+                    # her kaller vi tasken direkte. SYNCED kan i teorien
+                    # ikke v\u00e6re DRAFT, men vi kaller via wrapper for trygghet.
+                    _o = db.get(Order, order_id)
+                    if _o and _o.status != OrderStatus.DRAFT:
+                        sync_order.delay(order_id)
             except Exception:
                 pass
     finally:
