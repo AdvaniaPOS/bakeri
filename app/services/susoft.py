@@ -1999,9 +1999,12 @@ class SuSoftService:
 
         now_naive = to_naive_utc(now_utc())
 
-        # Get orders needing sync
+        # Get orders needing sync.
+        # NB: DRAFT-ordrer (mal-genererte, ikke bekreftet) skal IKKE pushes
+        # automatisk — de venter på manuell bekreftelse fra bakeriet.
         query = select(Order).where(
             Order.is_deleted == False,
+            Order.status != OrderStatus.DRAFT,
             Order.sync_status.in_([
                 SyncStatus.PENDING,
                 SyncStatus.RETRY_SCHEDULED,
