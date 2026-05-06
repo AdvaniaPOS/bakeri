@@ -721,7 +721,9 @@ async def confirm_order(
     ensure_editable(order, user=user)
 
     order.status = OrderStatus.CONFIRMED
-    if order.sync_status != SyncStatus.SYNCING:
+    # Marker for SuSoft-push. Vi unng\u00e5r \u00e5 overskrive en p\u00e5g\u00e5ende retry-plan
+    # slik at backoff-tellere ikke nullstilles ved gjentatte confirms.
+    if order.sync_status != SyncStatus.RETRY_SCHEDULED:
         order.sync_status = SyncStatus.PENDING
 
     if is_order_locked(order):
