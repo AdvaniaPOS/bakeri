@@ -194,8 +194,11 @@ async def list_orders(
     # Skjul SuSoft-cart-import-ordrer uten reell hente-/leveringsdato.
     # Disse får `delivery_date = today` som fallback ved ingest, men er ikke
     # klare for produksjon før kunden har valgt dato i SuSoft-kassa.
+    # NB: bruk `IS DISTINCT FROM` semantikk slik at source=NULL teller som
+    # "ikke cart-import" (vanlig SQL `NULL != 'x'` = NULL = falsy).
     base = base.where(
         or_(
+            Order.source.is_(None),
             Order.source != "susoft_cart_import",
             Order.susoft_pickup_at.isnot(None),
             Order.susoft_delivery_at.isnot(None),
