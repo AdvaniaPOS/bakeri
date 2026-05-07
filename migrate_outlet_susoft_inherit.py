@@ -15,6 +15,11 @@ Bruk:
 from sqlalchemy import select
 
 from app.database import SessionLocal
+# Importer hele models-modulen slik at ALLE mappede klasser (Tenant, User,
+# Order, ...) er registrert f\u00f8r f\u00f8rste flush. Ellers feiler SQLAlchemy med
+# NoReferencedTableError n\u00e5r FK-er fra customers peker p\u00e5 tabeller den ikke
+# har sett enn\u00e5.
+from app import models  # noqa: F401
 from app.models import Customer
 
 
