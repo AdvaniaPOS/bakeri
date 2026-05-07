@@ -95,8 +95,8 @@ export default function TwoFactorCard({ authFetch }) {
   return (
     <div className="card">
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-          {enabled ? <ShieldCheck className="w-5 h-5 text-purple-600" /> : <Lock className="w-5 h-5 text-purple-600" />}
+        <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+          {enabled ? <ShieldCheck className="w-5 h-5 text-amber-600" /> : <Lock className="w-5 h-5 text-amber-600" />}
         </div>
         <div>
           <h2 className="font-semibold text-gray-900">To-faktor-autentisering (2FA)</h2>

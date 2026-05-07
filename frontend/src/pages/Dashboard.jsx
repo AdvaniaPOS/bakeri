@@ -98,6 +98,8 @@ export default function Dashboard() {
     return num.toString();
   };
 
+  // KPI-kort: alle ikoner er n\u00f8ytrale slik at TALLET er det visuelle hovedpoenget.
+  // Status-farger forbeholdes til faktiske statuser (success/warning/danger), ikke pynt.
   const statsDisplay = [
     { 
       name: 'Dagens bestillinger', 
@@ -105,7 +107,6 @@ export default function Dashboard() {
       change: '+0%',
       trend: 'neutral',
       icon: ShoppingCart,
-      color: 'bg-blue-500'
     },
     { 
       name: 'Aktive kunder', 
@@ -113,7 +114,6 @@ export default function Dashboard() {
       change: '+0%',
       trend: 'neutral',
       icon: Users,
-      color: 'bg-green-500'
     },
     { 
       name: 'Produkter', 
@@ -121,7 +121,6 @@ export default function Dashboard() {
       change: '0%',
       trend: 'neutral',
       icon: Package,
-      color: 'bg-amber-500'
     },
     { 
       name: 'Total verdi', 
@@ -129,7 +128,6 @@ export default function Dashboard() {
       change: '+0%',
       trend: 'neutral',
       icon: TrendingUp,
-      color: 'bg-purple-500'
     },
   ];
   if (loading) {
@@ -160,8 +158,8 @@ export default function Dashboard() {
           <div key={stat.name} className="card card-tight">
             <div className="flex items-center justify-between mb-1.5">
               <p className="text-xs uppercase tracking-wider font-semibold text-gray-500">{stat.name}</p>
-              <div className={`w-7 h-7 ${stat.color} rounded flex items-center justify-center`}>
-                <stat.icon className="w-3.5 h-3.5 text-white" />
+              <div className="w-7 h-7 rounded flex items-center justify-center bg-gray-100 dark:bg-gray-700/60">
+                <stat.icon className="w-3.5 h-3.5 text-gray-600 dark:text-gray-300" />
               </div>
             </div>
             <p className="text-2xl font-semibold text-gray-900">{stat.value}</p>

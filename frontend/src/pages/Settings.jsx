@@ -209,7 +209,7 @@ function UsersCard({ authFetch, currentUser }) {
                       <td className="py-2 pr-3 text-gray-600">{u.email}</td>
                       <td className="py-2 pr-3">
                         {isSuper ? (
-                          <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-700 text-xs font-medium">Super-admin</span>
+                          <span className="badge badge-amber badge-plain">Super-admin</span>
                         ) : (
                           <select
                             value={u.role}
@@ -787,10 +787,10 @@ export default function Settings() {
       {/* Settings sections */}
       <div className="space-y-4">
         {/* SuSoft Integration - Moved to top */}
-        <div className="card border-2 border-purple-200">
+        <div className="card border-2 border-amber-200">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-              <Database className="w-5 h-5 text-purple-600" />
+            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+              <Database className="w-5 h-5 text-amber-600" />
             </div>
             <div>
               <h2 className="font-semibold text-gray-900">SuSoft Integrasjon</h2>
@@ -901,10 +901,10 @@ export default function Settings() {
           {/* Admin-API ("API 2") - aPOS-CART-er — DEAKTIVERT
               Henting av ordrer/CART-er fra SuSoft er fjernet. */}
           {false && (
-          <div className="mb-6 p-4 border border-purple-200 bg-purple-50 rounded-lg">
+          <div className="mb-6 p-4 border border-amber-200 bg-amber-50 rounded-lg">
             <div className="mb-3">
-              <h3 className="text-sm font-semibold text-purple-900">Admin-API (aPOS-CART-er)</h3>
-              <p className="text-xs text-purple-800 mt-1">
+              <h3 className="text-sm font-semibold text-amber-900">Admin-API (aPOS-CART-er)</h3>
+              <p className="text-xs text-amber-800 mt-1">
                 Brukes for &aring; hente CART-er som er opprettet i aPOS-kassen, slik at de kommer inn i ordresystemet automatisk.
                 Kan v&aelig;re samme bruker som over, eller en separat admin-bruker fra SuSoft.
               </p>
@@ -1194,8 +1194,8 @@ export default function Settings() {
         {/* Bakeri-innstillinger */}
         <div className="card">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-              <Calendar className="w-5 h-5 text-indigo-600" />
+            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+              <Calendar className="w-5 h-5 text-amber-600" />
             </div>
             <div>
               <h2 className="font-semibold text-gray-900">Bakeri-innstillinger</h2>

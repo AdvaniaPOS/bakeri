@@ -533,7 +533,7 @@ export default function TenantsAdmin() {
       <div className="mt-8">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-indigo-600" /> Super-admins
+            <ShieldCheck className="w-5 h-5 text-amber-600" /> Super-admins
           </h2>
           <button onClick={() => setShowAddAdmin(s => !s)} className="btn-primary text-sm">
             <UserPlus className="w-4 h-4" /> Legg til super-admin

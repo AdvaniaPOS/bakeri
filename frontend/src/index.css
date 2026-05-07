@@ -1,23 +1,67 @@
 ﻿@import 'tailwindcss';
 
 /*
- * Shopify-inspirert design system (Polaris-aktig).
- * Bakeriets gulbrune (amber) er beholdt som primær aksent.
- * Resten av paletten bruker Shopify-nøytrale gråtoner.
+ * Design system – Lampeland Bakeri
+ * ---------------------------------------------------------------
+ * ÉN brand-farge (amber). 3 status-farger (success / warning / danger).
+ * 1 info-farge (nøytral blå-grå). Alt annet er gråskala.
+ * Variabler defineres her slik at light/dark deler samme tokens.
  */
+
+:root {
+  /* Brand */
+  --brand-50:  #fff7ed;
+  --brand-100: #ffedd5;
+  --brand-500: #f59e0b;
+  --brand-600: #d97706;
+  --brand-700: #b45309;
+
+  /* Nøytral skala (light) */
+  --bg-app:    #f1f1f1;
+  --bg-panel:  #ffffff;
+  --bg-muted:  #f6f6f7;
+  --border:    #e5e7eb;
+  --text-1:    #111827;
+  --text-2:    #4b5563;
+  --text-3:    #6b7280;
+
+  /* Status (subtile) */
+  --success-bg: #ecfdf5; --success-fg: #047857; --success-dot: #10b981;
+  --warning-bg: #fffbeb; --warning-fg: #92400e; --warning-dot: #f59e0b;
+  --danger-bg:  #fef2f2; --danger-fg:  #b91c1c; --danger-dot:  #ef4444;
+  --info-bg:    #f1f5f9; --info-fg:    #334155; --info-dot:    #64748b;
+}
+
+html.dark {
+  --bg-app:    #0f172a;
+  --bg-panel:  #1f2937;
+  --bg-muted:  #111827;
+  --border:    #374151;
+  --text-1:    #f3f4f6;
+  --text-2:    #d1d5db;
+  --text-3:    #9ca3af;
+
+  --success-bg: rgba(16,185,129,0.12); --success-fg: #6ee7b7; --success-dot: #10b981;
+  --warning-bg: rgba(245,158,11,0.14); --warning-fg: #fcd34d; --warning-dot: #f59e0b;
+  --danger-bg:  rgba(239,68,68,0.12);  --danger-fg:  #fca5a5; --danger-dot:  #ef4444;
+  --info-bg:    rgba(148,163,184,0.15); --info-fg:   #cbd5e1; --info-dot:    #94a3b8;
+}
 
 @layer base {
   html {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
   }
 
   body {
-    background-color: #f1f1f1;
-    color: #202223;
+    background-color: var(--bg-app);
+    color: var(--text-1);
     font-size: 14px;
-    line-height: 1.4;
+    line-height: 1.45;
   }
+
+  h1, h2, h3, h4 { letter-spacing: -0.01em; }
 
   /* Subtle scrollbars */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -109,17 +153,26 @@
     @apply border-b-0;
   }
 
-  /* Status-pills */
+  /* Status-pills (subtile: dempet bakgrunn + farget tekst + liten prikk) */
   .badge {
-    @apply inline-flex items-center gap-1 px-2 py-0.5
-           text-xs font-medium rounded-full;
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5
+           text-xs font-medium rounded-full border;
   }
-  .badge-neutral  { @apply bg-gray-100 text-gray-700; }
-  .badge-success  { @apply bg-green-100 text-green-800; }
-  .badge-warning  { @apply bg-yellow-100 text-yellow-800; }
-  .badge-info     { @apply bg-blue-100 text-blue-800; }
-  .badge-danger   { @apply bg-red-100 text-red-800; }
-  .badge-amber    { @apply bg-amber-100 text-amber-800; }
+  .badge::before {
+    content: '';
+    width: 6px; height: 6px; border-radius: 9999px;
+    background: currentColor;
+    opacity: 0.85;
+    flex-shrink: 0;
+  }
+  .badge-neutral { background: var(--info-bg);    color: var(--info-fg);    border-color: transparent; }
+  .badge-info    { background: var(--info-bg);    color: var(--info-fg);    border-color: transparent; }
+  .badge-success { background: var(--success-bg); color: var(--success-fg); border-color: transparent; }
+  .badge-warning { background: var(--warning-bg); color: var(--warning-fg); border-color: transparent; }
+  .badge-danger  { background: var(--danger-bg);  color: var(--danger-fg);  border-color: transparent; }
+  .badge-amber   { background: var(--warning-bg); color: var(--warning-fg); border-color: transparent; }
+  /* Variant uten prikk (for SuSoft "Synkronisert" og lignende) */
+  .badge-plain::before { display: none; }
 
   /* Page header (Shopify "Page header") */
   .page-header {
@@ -223,9 +276,7 @@ html.dark .shop-table thead th { background-color: #111827; color: #9ca3af; bord
 html.dark .shop-table tbody td { color: #e5e7eb; border-color: #1f2937; }
 html.dark .shop-table tbody tr:hover { background-color: #1e293b; }
 
-/* Status-pills (lys versjon ser daarlig ut paa morkt) */
-html.dark .badge-neutral { background-color: #374151; color: #e5e7eb; }
-html.dark .badge-success { background-color: rgba(34,197,94,0.15); color: #86efac; }
+/* Status-pills bruker n\u00e5 CSS-variabler \u2192 ingen separate dark-overrides trengs */
 
 /* Andre vanlige farge-klasser i sider */
 html.dark .bg-amber-50  { background-color: rgba(245,158,11,0.10) !important; }

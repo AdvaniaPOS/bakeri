@@ -866,7 +866,7 @@ function PortalAccessModal({ customer, onClose, authFetch }) {
                         <button
                           type="button"
                           onClick={() => handleResetPassword(u, u.customer_id)}
-                          className="text-xs text-indigo-600 hover:text-indigo-800 underline"
+                          className="text-xs text-amber-700 hover:text-amber-800 underline"
                         >
                           Nullstill passord
                         </button>
