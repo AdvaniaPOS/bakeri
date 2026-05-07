@@ -1,20 +1,39 @@
 ﻿@import 'tailwindcss';
 
 /*
- * Design system – Lampeland Bakeri
+ * Design system – Advania-branding
  * ---------------------------------------------------------------
- * ÉN brand-farge (amber). 3 status-farger (success / warning / danger).
- * 1 info-farge (nøytral blå-grå). Alt annet er gråskala.
- * Variabler defineres her slik at light/dark deler samme tokens.
+ * Brand = Advania-rød (#E1251B). Status: success/warning/danger/info.
+ * Hele "amber-*"-paletten er omdefinert til Advania-rød via @theme,
+ * slik at 200+ eksisterende bg-amber-*/text-amber-* i JSX automatisk
+ * blir branda røde uten endringer i komponentene.
+ * Danger = bordeaux/crimson (rose) for tydelig skille fra brand.
  */
 
+/* Override Tailwinds default amber-* (oklch) til Advania-rød.
+   Plassert på html-selector for å unngå at Tailwinds optimizer
+   deduper :root-blokken og kaster overridene. */
+html {
+  --color-amber-50:  #fdf2f2;
+  --color-amber-100: #fbe1de;
+  --color-amber-200: #f6c0bb;
+  --color-amber-300: #ee9389;
+  --color-amber-400: #e3625a;
+  --color-amber-500: #e1251b;
+  --color-amber-600: #c81d14;
+  --color-amber-700: #a8170f;
+  --color-amber-800: #8a120c;
+  --color-amber-900: #6b0e09;
+  --color-amber-950: #450807;
+}
+
 :root {
-  /* Brand */
-  --brand-50:  #fff7ed;
-  --brand-100: #ffedd5;
-  --brand-500: #f59e0b;
-  --brand-600: #d97706;
-  --brand-700: #b45309;
+  /* Brand (Advania-rød) */
+  --brand-50:  #fdf2f2;
+  --brand-100: #fbe1de;
+  --brand-500: #e1251b;
+  --brand-600: #c81d14;
+  --brand-700: #a8170f;
 
   /* Nøytral skala (light) */
   --bg-app:    #f1f1f1;
@@ -25,10 +44,10 @@
   --text-2:    #4b5563;
   --text-3:    #6b7280;
 
-  /* Status (subtile) */
+  /* Status (subtile). Danger = bordeaux/crimson for skille fra brand-rød. */
   --success-bg: #ecfdf5; --success-fg: #047857; --success-dot: #10b981;
   --warning-bg: #fffbeb; --warning-fg: #92400e; --warning-dot: #f59e0b;
-  --danger-bg:  #fef2f2; --danger-fg:  #b91c1c; --danger-dot:  #ef4444;
+  --danger-bg:  #fff1f2; --danger-fg:  #9f1239; --danger-dot:  #be123c;
   --info-bg:    #f1f5f9; --info-fg:    #334155; --info-dot:    #64748b;
 }
 
@@ -43,7 +62,7 @@ html.dark {
 
   --success-bg: rgba(16,185,129,0.12); --success-fg: #6ee7b7; --success-dot: #10b981;
   --warning-bg: rgba(245,158,11,0.14); --warning-fg: #fcd34d; --warning-dot: #f59e0b;
-  --danger-bg:  rgba(239,68,68,0.12);  --danger-fg:  #fca5a5; --danger-dot:  #ef4444;
+  --danger-bg:  rgba(190,18,60,0.18);  --danger-fg:  #fda4af; --danger-dot:  #f43f5e;
   --info-bg:    rgba(148,163,184,0.15); --info-fg:   #cbd5e1; --info-dot:    #94a3b8;
 }
 
@@ -91,8 +110,9 @@ html.dark {
   }
 
   .btn-danger {
+    /* Bordeaux/crimson (rose-800/900) — distinkt fra brand-rød */
     @apply inline-flex items-center justify-center gap-1.5
-           bg-red-600 hover:bg-red-700 active:bg-red-800
+           bg-rose-800 hover:bg-rose-900 active:bg-rose-950
            text-white text-sm font-medium
            py-1.5 px-3 rounded-md shadow-sm
            transition-colors;
@@ -279,10 +299,13 @@ html.dark .shop-table tbody tr:hover { background-color: #1e293b; }
 /* Status-pills bruker n\u00e5 CSS-variabler \u2192 ingen separate dark-overrides trengs */
 
 /* Andre vanlige farge-klasser i sider */
-html.dark .bg-amber-50  { background-color: rgba(245,158,11,0.10) !important; }
-html.dark .bg-amber-100 { background-color: rgba(245,158,11,0.20) !important; }
-html.dark .text-amber-700 { color: #fbbf24 !important; }
-html.dark .text-amber-800 { color: #fcd34d !important; }
+/* Advania-rød aksent i mørk modus (subtil, varm) */
+html.dark .bg-amber-50  { background-color: rgba(225,37,27,0.10) !important; }
+html.dark .bg-amber-100 { background-color: rgba(225,37,27,0.18) !important; }
+html.dark .text-amber-700 { color: #fda4a4 !important; }
+html.dark .text-amber-800 { color: #fec5c1 !important; }
+html.dark .text-amber-900 { color: #fed7d3 !important; }
+html.dark .border-amber-200 { border-color: rgba(225,37,27,0.30) !important; }
 
 html.dark .bg-red-50   { background-color: rgba(239,68,68,0.10) !important; }
 html.dark .border-red-200 { border-color: rgba(239,68,68,0.30) !important; }
