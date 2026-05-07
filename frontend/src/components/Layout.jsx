@@ -160,7 +160,7 @@ export default function Layout() {
           ) : (
             <div
               className="w-7 h-7 rounded-md flex items-center justify-center shadow-sm"
-              style={{ backgroundColor: tenant?.primary_color || '#e1251b' }}
+              style={{ backgroundColor: tenant?.primary_color || '#4f46e5' }}
             >
               <Croissant className="w-4 h-4 text-white" />
             </div>
@@ -233,8 +233,8 @@ export default function Layout() {
         {/* User section */}
         <div className="p-2 border-t border-white/5">
           <div className="flex items-center gap-2 px-2 py-2 rounded-md hover:bg-white/10 transition-colors">
-            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(225,37,27,0.18)' }}>
-              <span className="text-xs font-semibold" style={{ color: '#fda4a4' }}>
+            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(99,102,241,0.18)' }}>
+              <span className="text-xs font-semibold" style={{ color: '#a5b4fc' }}>
                 {getInitials(user?.name)}
               </span>
             </div>
