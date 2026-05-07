@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
-import { Search, Plus, Building2, Phone, Mail, MapPin, RefreshCw, Edit2, X, Check, ClipboardList, AlertTriangle, CalendarClock, PlayCircle, PauseCircle, Eye, EyeOff, Store, UserPlus, Star, Trash2, ChevronRight, ChevronDown } from 'lucide-react';
+import { Search, Plus, Building2, Phone, Mail, MapPin, RefreshCw, Edit2, X, Check, ClipboardList, AlertTriangle, CalendarClock, PlayCircle, PauseCircle, Eye, EyeOff, Store, UserPlus, Star, Trash2, ChevronRight, ChevronDown, Repeat, CalendarCheck, Globe } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import QuickOverrideModal from '../components/QuickOverrideModal';
@@ -241,6 +241,27 @@ export default function Customers() {
                 </button>
               </div>
             )}
+            <div className="px-3 py-2 text-xs text-gray-500 flex items-center gap-3 flex-wrap border-b">
+              <span className="font-medium text-gray-600">Symboler:</span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-green-100 text-green-700">
+                  <Repeat className="w-2.5 h-2.5" />
+                </span>
+                Fastbestilling (mal)
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-blue-100 text-blue-700">
+                  <CalendarCheck className="w-2.5 h-2.5" />
+                </span>
+                Periodeplan kjører
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-purple-100 text-purple-700">
+                  <Globe className="w-2.5 h-2.5" />
+                </span>
+                Portal-tilgang
+              </span>
+            </div>
             <table className="shop-table">
               <thead>
                 <tr>
@@ -294,6 +315,35 @@ export default function Customers() {
                           <Building2 className="w-4 h-4 text-amber-600" />
                         </div>
                         <span className="font-medium text-gray-900">{customer.name}</span>
+                        <div className="flex items-center gap-1 ml-1">
+                          {customer.has_active_template ? (
+                            <span title="Fastbestilling (mal aktiv)" className="inline-flex items-center justify-center w-5 h-5 rounded bg-green-100 text-green-700">
+                              <Repeat className="w-3 h-3" />
+                            </span>
+                          ) : (
+                            <span title="Ingen fastbestilling" className="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 text-gray-300">
+                              <Repeat className="w-3 h-3" />
+                            </span>
+                          )}
+                          {customer.has_future_orders ? (
+                            <span title="Periodeplan kjører (har fremtidige ordrer)" className="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-100 text-blue-700">
+                              <CalendarCheck className="w-3 h-3" />
+                            </span>
+                          ) : (
+                            <span title="Ingen plan / ingen fremtidige ordrer" className="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 text-gray-300">
+                              <CalendarCheck className="w-3 h-3" />
+                            </span>
+                          )}
+                          {customer.has_portal_user ? (
+                            <span title="Har portal-tilgang (kunden bestiller selv)" className="inline-flex items-center justify-center w-5 h-5 rounded bg-purple-100 text-purple-700">
+                              <Globe className="w-3 h-3" />
+                            </span>
+                          ) : (
+                            <span title="Ingen portal-bruker" className="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 text-gray-300">
+                              <Globe className="w-3 h-3" />
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td>

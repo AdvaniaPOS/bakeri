@@ -53,8 +53,54 @@ async def list_customers(
     query = query.order_by(Customer.name).offset((page - 1) * page_size).limit(page_size)
     customers = db.execute(query).scalars().all()
 
+    # Batch-hent indikatorer for visning i kunde-listen:
+    #  - has_active_template  → fastbestilling/mal aktiv
+    #  - has_portal_user      → kunden har minst én bruker med portal-tilgang
+    #  - has_future_orders    → periodeplan har generert ordrer fram i tid
+    customer_ids = [c.id for c in customers]
+    template_ids: set[int] = set()
+    portal_ids: set[int] = set()
+    future_order_ids: set[int] = set()
+    if customer_ids:
+        from ..models import MasterTemplate, Order
+        from ..auth_models import User as _User
+
+        template_ids = set(db.execute(
+            select(MasterTemplate.customer_id).where(
+                MasterTemplate.tenant_id == tenant.id,
+                MasterTemplate.customer_id.in_(customer_ids),
+                MasterTemplate.is_active == True,  # noqa: E712
+            )
+        ).scalars().all())
+
+        portal_ids = set(db.execute(
+            select(_User.customer_id).where(
+                _User.tenant_id == tenant.id,
+                _User.customer_id.in_(customer_ids),
+                _User.is_deleted == False,  # noqa: E712
+                _User.is_active == True,  # noqa: E712
+            )
+        ).scalars().all())
+
+        future_order_ids = set(db.execute(
+            select(Order.customer_id).where(
+                Order.tenant_id == tenant.id,
+                Order.customer_id.in_(customer_ids),
+                Order.is_deleted == False,  # noqa: E712
+                Order.delivery_date >= today_oslo(),
+            ).distinct()
+        ).scalars().all())
+
+    items: list[CustomerResponse] = []
+    for c in customers:
+        resp = CustomerResponse.model_validate(c)
+        resp.has_active_template = c.id in template_ids
+        resp.has_portal_user = c.id in portal_ids
+        resp.has_future_orders = c.id in future_order_ids
+        items.append(resp)
+
     return CustomerListResponse(
-        items=[CustomerResponse.model_validate(c) for c in customers],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,

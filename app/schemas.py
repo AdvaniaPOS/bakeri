@@ -155,6 +155,12 @@ class CustomerResponse(CustomerBase, TimestampSchema):
     # Be lenient on output so listing customers never fails validation.
     email: Optional[str] = None
 
+    # Indikator-flagg fylt ut av list-endepunktet for hurtig visning i UI.
+    # Default False slik at enkelt-uthentinger fortsatt fungerer uten ekstra spørringer.
+    has_active_template: bool = False
+    has_portal_user: bool = False
+    has_future_orders: bool = False
+
     model_config = ConfigDict(from_attributes=True)
 
 
