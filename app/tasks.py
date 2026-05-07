@@ -14,10 +14,45 @@ from celery import Celery
 from celery.schedules import crontab
 
 from .database import SessionLocal
-from .models import Order, Customer, SyncStatus
+from .models import Order, Customer, SyncStatus, ScheduledTaskRun
 from .time_utils import now_oslo, today_oslo, to_naive_utc, now_utc
 
 logger = logging.getLogger(__name__)
+
+
+def _record_task_run(task_name: str, started_at: datetime, success: bool,
+                     result=None, error_message: str = None) -> None:
+    """Persistere et sammendrag av en scheduled task-kj\u00f8ring til DB.
+
+    Brukes av SUPER_ADMIN-portalen for \u00e5 bekrefte at periodiske jobber
+    faktisk kj\u00f8rer. Feil i selve loggingen sluker vi (logger via stdlib)
+    slik at den ikke maskerer task-resultatet.
+    """
+    db = SessionLocal()
+    try:
+        finished = to_naive_utc(now_utc())
+        duration_ms = int((finished - started_at).total_seconds() * 1000)
+        run = ScheduledTaskRun(
+            task_name=task_name,
+            started_at=started_at,
+            finished_at=finished,
+            duration_ms=duration_ms,
+            success=success,
+            result=result if isinstance(result, dict) else (
+                {"value": result} if result is not None else None
+            ),
+            error_message=error_message,
+        )
+        db.add(run)
+        db.commit()
+    except Exception:
+        logger.exception("Klarte ikke logge scheduled task-run for %s", task_name)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        db.close()
 
 # Configure Celery
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -109,6 +144,9 @@ def generate_orders_for_all_customers():
     from .models import MasterTemplate
     from .api.orders import _generate_for_date
 
+    started_at = to_naive_utc(now_utc())
+    task_name = "app.tasks.generate_orders_for_all_customers"
+
     db = SessionLocal()
     try:
         customers = db.execute(
@@ -153,8 +191,15 @@ def generate_orders_for_all_customers():
                     customer.id, e,
                 )
 
+        _record_task_run(task_name, started_at, success=True, result=results)
         return results
 
+    except Exception as exc:
+        _record_task_run(
+            task_name, started_at, success=False,
+            error_message=f"{type(exc).__name__}: {exc}",
+        )
+        raise
     finally:
         db.close()
 

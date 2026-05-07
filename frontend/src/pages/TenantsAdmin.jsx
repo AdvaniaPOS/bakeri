@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Building2, Plus, RefreshCw, CheckCircle, XCircle, AlertCircle, Lock, Unlock, Settings as SettingsIcon, LogIn, ShieldCheck, Trash2, UserPlus, ToggleLeft, Activity, Download } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import ScheduledTasksWidget from '../components/ScheduledTasksWidget';
 
 const EMPTY_FORM = {
   name: '',
@@ -362,6 +363,8 @@ export default function TenantsAdmin() {
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">{error}</div>
       )}
+
+      <ScheduledTasksWidget />
 
       {showForm && (
         <form onSubmit={submit} className="card mb-6 space-y-4">

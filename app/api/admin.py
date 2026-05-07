@@ -1880,6 +1880,89 @@ async def backup_tenant(
     return JSONResponse(content=export, headers=headers)
 
 
+# =============================================================================
+# Scheduled task runs (super-admin observability)
+# =============================================================================
+
+@router.get("/scheduled-tasks/runs")
+async def list_scheduled_task_runs(
+    task_name: Optional[str] = None,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """Sist N kj\u00f8ringer av Celery-beat tasks (default 20).
+
+    Filtrer p\u00e5 task_name (f.eks. `app.tasks.generate_orders_for_all_customers`)
+    eller la st\u00e5 tomt for \u00e5 se alle.
+    """
+    from ..models import ScheduledTaskRun
+
+    limit = max(1, min(int(limit or 20), 200))
+    stmt = select(ScheduledTaskRun).order_by(ScheduledTaskRun.started_at.desc()).limit(limit)
+    if task_name:
+        stmt = select(ScheduledTaskRun).where(
+            ScheduledTaskRun.task_name == task_name
+        ).order_by(ScheduledTaskRun.started_at.desc()).limit(limit)
+
+    rows = db.execute(stmt).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "task_name": r.task_name,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            "duration_ms": r.duration_ms,
+            "success": r.success,
+            "result": r.result,
+            "error_message": r.error_message,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/scheduled-tasks/summary")
+async def scheduled_tasks_summary(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+):
+    """Siste kj\u00f8ring per kjent task-navn — for status-widget i super-admin-portal."""
+    from ..models import ScheduledTaskRun
+    from sqlalchemy import func
+
+    # Hent siste run-id per task-navn
+    subq = (
+        select(
+            ScheduledTaskRun.task_name,
+            func.max(ScheduledTaskRun.started_at).label("last_started"),
+        )
+        .group_by(ScheduledTaskRun.task_name)
+        .subquery()
+    )
+    rows = db.execute(
+        select(ScheduledTaskRun)
+        .join(
+            subq,
+            (ScheduledTaskRun.task_name == subq.c.task_name)
+            & (ScheduledTaskRun.started_at == subq.c.last_started),
+        )
+        .order_by(ScheduledTaskRun.task_name)
+    ).scalars().all()
+
+    return [
+        {
+            "task_name": r.task_name,
+            "last_run_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            "duration_ms": r.duration_ms,
+            "success": r.success,
+            "result": r.result,
+            "error_message": r.error_message,
+        }
+        for r in rows
+    ]
+
+
 
 
 

@@ -1373,6 +1373,52 @@ class SyncLog(Base, TimestampMixin, TenantMixin):
     )
 
 
+class ScheduledTaskRun(Base):
+    """
+    Logg over kj\u00f8ringer av Celery-beat tasks (cross-tenant).
+
+    GLOBAL (ikke tenant-scoped): Brukes av SUPER_ADMIN for \u00e5 verifisere
+    at periodiske oppgaver kj\u00f8rer som planlagt og se sammendrag av resultatet
+    (antall ordrer generert, kunder behandlet, evt. feilmelding).
+    """
+    __tablename__ = "scheduled_task_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    task_name: Mapped[str] = mapped_column(
+        String(200), nullable=False, index=True,
+        comment="Celery task-navn, f.eks. 'app.tasks.generate_orders_for_all_customers'"
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, index=True,
+        comment="N\u00e5r task-en startet (UTC, naive)"
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+        comment="N\u00e5r task-en var ferdig. NULL hvis fortsatt p\u00e5g\u00e5ende."
+    )
+    duration_ms: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+        comment="Varighet i millisekunder."
+    )
+    success: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+        comment="True hvis task fullf\u00f8rte uten ubehandlet feil."
+    )
+    result: Mapped[Optional[dict]] = mapped_column(
+        JSON, nullable=True,
+        comment="Sammendrag fra task-en (f.eks. {'orders_created': 5, 'customers_processed': 12})."
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+        comment="Stack-trace eller feilmelding hvis success=False."
+    )
+
+    __table_args__ = (
+        Index("ix_scheduled_task_runs_name_started", "task_name", "started_at"),
+    )
+
+
 class AdminAlert(Base, TimestampMixin, TenantMixin):
     """
     Alert notifications for administrators.
