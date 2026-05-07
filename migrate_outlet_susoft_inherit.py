@@ -20,6 +20,7 @@ from app.database import SessionLocal
 # NoReferencedTableError n\u00e5r FK-er fra customers peker p\u00e5 tabeller den ikke
 # har sett enn\u00e5.
 from app import models  # noqa: F401
+from app import auth_models  # noqa: F401  # registrerer Tenant + User
 from app.models import Customer
 
 
