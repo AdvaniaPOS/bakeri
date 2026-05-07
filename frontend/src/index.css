@@ -137,22 +137,23 @@ html.dark {
            transition;
   }
 
-  /* Sidebar */
+  /* Sidebar (alltid mørk grafitt – Advania-look) */
   .sidebar-link {
     @apply flex items-center gap-2.5 px-2.5 py-1.5
-           text-sm text-gray-600
+           text-sm text-gray-300
            rounded-md
-           hover:bg-gray-200/60 hover:text-gray-900
+           hover:bg-white/10 hover:text-white
            transition-colors;
+    border-left: 2px solid transparent;
   }
 
   .sidebar-link.active {
-    @apply bg-white text-gray-900 font-medium;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
+    @apply bg-white/10 text-white font-medium;
+    border-left-color: var(--brand-500);
   }
 
   .sidebar-section-label {
-    @apply px-2.5 pt-4 pb-1 text-xs font-medium uppercase tracking-wider text-gray-400;
+    @apply px-2.5 pt-4 pb-1 text-xs font-medium uppercase tracking-wider text-gray-500;
   }
 
   /* Tabeller (Shopify "resource list") */
@@ -225,12 +226,12 @@ html.dark body {
 
 /* App-skall (settes i Layout.jsx) */
 .app-bg      { background: #f1f1f1; }
-.app-sidebar { background: #f1f1f1; }
+.app-sidebar { background: #111827; } /* Alltid mørk grafitt – Advania */
 .app-main    { background: #f6f6f7; }
 .app-divider { border-color: #e5e7eb; }
 
 html.dark .app-bg      { background: #0f172a; }
-html.dark .app-sidebar { background: #111827; } /* gray-900 */
+html.dark .app-sidebar { background: #0b1220; } /* enda dypere i mørk modus */
 html.dark .app-main    { background: #0f172a; }
 html.dark .app-divider { border-color: #1f2937; }
 
@@ -284,13 +285,10 @@ html.dark .input {
   border-color: #374151;
   color: #f3f4f6;
 }
+/* Sidebar er alltid mørk – base-stilene i @layer dekker både light og dark.
+   Behold kun smaa justeringer i mork modus. */
 html.dark .sidebar-link        { color: #cbd5e1; }
-html.dark .sidebar-link:hover  { background-color: rgba(55,65,81,0.6); color: #f9fafb; }
-html.dark .sidebar-link.active {
-  background-color: #1f2937;
-  color: #f9fafb;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
-}
+html.dark .sidebar-link:hover  { background-color: rgba(255,255,255,0.08); color: #ffffff; }
 html.dark .sidebar-section-label { color: #6b7280; }
 html.dark .shop-table thead th { background-color: #111827; color: #9ca3af; border-color: #374151; }
 html.dark .shop-table tbody td { color: #e5e7eb; border-color: #1f2937; }

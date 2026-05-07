@@ -11,6 +11,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { Sun, Moon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getStoredTheme, applyTheme } from '../theme';
+import advaniaLogo from '../assets/advania-logo.svg';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -59,20 +60,8 @@ export default function Login() {
       <div className="max-w-md w-full">
         {/* Logo and title */}
         <div className="text-center mb-6">
-          <div className="mx-auto h-12 w-12 bg-amber-600 rounded-md flex items-center justify-center mb-3">
-            <svg 
-              className="h-7 w-7 text-white" 
-              fill="none" 
-              viewBox="0 0 24 24" 
-              stroke="currentColor"
-            >
-              <path 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                strokeWidth={2} 
-                d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" 
-              />
-            </svg>
+          <div className="mx-auto inline-flex items-center justify-center px-5 py-3 mb-4 rounded-lg" style={{ backgroundColor: '#111827' }}>
+            <img src={advaniaLogo} alt="Advania" className="h-8 w-auto" />
           </div>
           <h1 className="text-xl font-semibold text-gray-900">Advania Bakeri</h1>
           <p className="mt-1 text-sm text-gray-500">Logg inn for å fortsette</p>

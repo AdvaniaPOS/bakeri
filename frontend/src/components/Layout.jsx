@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { getStoredTheme, applyTheme } from '../theme';
 import NotificationBell from './NotificationBell';
+import advaniaLogo from '../assets/advania-logo.svg';
 import { 
   LayoutDashboard, 
   Package, 
@@ -104,36 +105,23 @@ export default function Layout() {
   return (
     <div className="min-h-screen flex app-bg">
       {/* Mobil topp-bar (vises kun under lg) */}
-      <header className="lg:hidden fixed top-0 inset-x-0 z-30 flex items-center justify-between px-3 h-12 app-sidebar border-b border-gray-200 app-divider">
+      <header className="lg:hidden fixed top-0 inset-x-0 z-30 flex items-center justify-between px-3 h-12 app-sidebar border-b border-white/5">
         <button
           onClick={() => setMobileOpen(true)}
-          className="p-2 -ml-2 rounded-md text-gray-700 hover:bg-gray-200/60"
+          className="p-2 -ml-2 rounded-md text-gray-300 hover:text-white hover:bg-white/10"
           aria-label="Åpne meny"
         >
           <Menu className="w-5 h-5" />
         </button>
         <div className="flex items-center gap-2 min-w-0">
-          {tenant?.logo_url ? (
-            <img
-              src={tenant.logo_url}
-              alt=""
-              className="w-6 h-6 rounded-md object-cover flex-shrink-0 shadow-sm"
-            />
-          ) : (
-            <div
-              className="w-6 h-6 rounded-md flex items-center justify-center shadow-sm flex-shrink-0"
-              style={{ backgroundColor: tenant?.primary_color || '#d97706' }}
-            >
-              <Croissant className="w-3.5 h-3.5 text-white" />
-            </div>
-          )}
-          <span className="text-sm font-semibold text-gray-900 truncate">{tenant?.name || 'Bakeri'}</span>
+          <img src={advaniaLogo} alt="Advania" className="h-5 w-auto flex-shrink-0" />
+          <span className="text-sm font-semibold text-white/90 truncate">{tenant?.name || 'Bakeri'}</span>
         </div>
         <div className="flex items-center gap-1">
           {!isSuperAdminMaster && <NotificationBell />}
           <button
             onClick={toggleTheme}
-            className="p-2 -mr-2 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60"
+            className="p-2 -mr-2 rounded-md text-gray-300 hover:text-white hover:bg-white/10"
             aria-label="Bytt tema"
           >
             {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
@@ -156,30 +144,35 @@ export default function Layout() {
           mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        {/* Logo / tenant */}
-        <div className="px-4 py-3 flex items-center gap-2.5">
+        {/* Advania-logo */}
+        <div className="px-4 pt-4 pb-2">
+          <img src={advaniaLogo} alt="Advania" className="h-6 w-auto" />
+        </div>
+
+        {/* Tenant + verktøy */}
+        <div className="px-4 pb-3 flex items-center gap-2.5 border-b border-white/5">
           {tenant?.logo_url ? (
             <img
               src={tenant.logo_url}
               alt=""
-              className="w-8 h-8 rounded-md object-cover shadow-sm"
+              className="w-7 h-7 rounded-md object-cover shadow-sm"
             />
           ) : (
             <div
-              className="w-8 h-8 rounded-md flex items-center justify-center shadow-sm"
-              style={{ backgroundColor: tenant?.primary_color || '#d97706' }}
+              className="w-7 h-7 rounded-md flex items-center justify-center shadow-sm"
+              style={{ backgroundColor: tenant?.primary_color || '#e1251b' }}
             >
-              <Croissant className="w-4.5 h-4.5 text-white" />
+              <Croissant className="w-4 h-4 text-white" />
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <h1 className="text-sm font-semibold text-gray-900 truncate" title={tenant?.name || 'Bakeri'}>
+            <h1 className="text-sm font-semibold text-white truncate" title={tenant?.name || 'Bakeri'}>
               {tenant?.name || 'Bakeri'}
             </h1>
           </div>
           <button
             onClick={toggleTheme}
-            className="hidden lg:inline-flex p-1.5 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60 transition-colors"
+            className="hidden lg:inline-flex p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
             title={theme === 'dark' ? 'Bytt til lyst tema' : 'Bytt til mørkt tema'}
             aria-label="Bytt tema"
           >
@@ -192,7 +185,7 @@ export default function Layout() {
           )}
           <button
             onClick={() => setMobileOpen(false)}
-            className="lg:hidden p-1.5 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-200/60"
+            className="lg:hidden p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-white/10"
             aria-label="Lukk meny"
           >
             <X className="w-4 h-4" />
@@ -238,24 +231,24 @@ export default function Layout() {
         </nav>
 
         {/* User section */}
-        <div className="p-2">
-          <div className="flex items-center gap-2 px-2 py-2 rounded-md hover:bg-gray-200/60 transition-colors">
-            <div className="w-7 h-7 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <span className="text-xs font-semibold text-amber-700">
+        <div className="p-2 border-t border-white/5">
+          <div className="flex items-center gap-2 px-2 py-2 rounded-md hover:bg-white/10 transition-colors">
+            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(225,37,27,0.18)' }}>
+              <span className="text-xs font-semibold" style={{ color: '#fda4a4' }}>
                 {getInitials(user?.name)}
               </span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 truncate" title={user?.name}>
+              <p className="text-sm font-medium text-white truncate" title={user?.name}>
                 {user?.name || 'Bruker'}
               </p>
-              <p className="text-xs text-gray-500 truncate">
+              <p className="text-xs text-gray-400 truncate">
                 {getRoleDisplay(user?.role)}
               </p>
             </div>
             <button
               onClick={handleLogout}
-              className="p-1 text-gray-400 hover:text-red-600 hover:bg-white rounded transition-colors"
+              className="p-1 text-gray-400 hover:text-white hover:bg-white/10 rounded transition-colors"
               title="Logg ut"
             >
               <LogOut className="w-4 h-4" />
