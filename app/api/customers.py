@@ -463,10 +463,10 @@ async def create_outlet(
         order_lead_days=parent.order_lead_days,
         delivers_on_holidays=parent.delivers_on_holidays,
         country=parent.country,
-        # Arv hovedkundens SuSoft-ID slik at fakturering g\u00e5r mot samme
-        # SuSoft-kunde som hovedkunden. Kan overstyres senere ved \u00e5 fylle
-        # inn en egen susoft_customer_id p\u00e5 utsalget.
-        susoft_customer_id=parent.susoft_customer_id,
+        # MERK: Vi kopierer IKKE parent.susoft_customer_id hit, fordi DB har
+        # en unique-constraint (tenant_id, susoft_customer_id). Faktura-ruting
+        # til hovedkundens SuSoft-ID skjer i stedet ved runtime i
+        # susoft._create_susoft_order n\u00e5r utsalget mangler egen ID.
         **data.model_dump(),
     )
     db.add(outlet)
