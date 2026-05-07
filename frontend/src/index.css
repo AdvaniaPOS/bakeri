@@ -11,21 +11,56 @@
  */
 
 /* Override Tailwinds default amber-* (oklch) til Advania-rød.
-   Plassert på html-selector for å unngå at Tailwinds optimizer
-   deduper :root-blokken og kaster overridene. */
-html {
-  --color-amber-50:  #fdf2f2;
-  --color-amber-100: #fbe1de;
-  --color-amber-200: #f6c0bb;
-  --color-amber-300: #ee9389;
-  --color-amber-400: #e3625a;
-  --color-amber-500: #e1251b;
-  --color-amber-600: #c81d14;
-  --color-amber-700: #a8170f;
-  --color-amber-800: #8a120c;
-  --color-amber-900: #6b0e09;
-  --color-amber-950: #450807;
+   Tailwind v4 deduper og normaliserer ALLE forsok pa a redefinere
+   --color-amber-* via :root, :host, html, :root:root osv. — optimizeren
+   beholder bare sin egen definisjon. Vi maa derfor overstyre selve
+   utility-klassene direkte (med en attributt-selector for hoyere
+   spesifisitet enn Tailwinds .bg-amber-*). Dette dekker bade direkte
+   bruk i JSX og @apply'd verdier i komponentstiler nedenfor. */
+html[lang] .bg-amber-50  { background-color: #fdf2f2; }
+html[lang] .bg-amber-100 { background-color: #fbe1de; }
+html[lang] .bg-amber-200 { background-color: #f6c0bb; }
+html[lang] .bg-amber-300 { background-color: #ee9389; }
+html[lang] .bg-amber-400 { background-color: #e3625a; }
+html[lang] .bg-amber-500 { background-color: #e1251b; }
+html[lang] .bg-amber-600 { background-color: #c81d14; }
+html[lang] .bg-amber-700 { background-color: #a8170f; }
+html[lang] .bg-amber-800 { background-color: #8a120c; }
+html[lang] .bg-amber-900 { background-color: #6b0e09; }
+
+html[lang] .hover\:bg-amber-500:hover { background-color: #e1251b; }
+html[lang] .hover\:bg-amber-600:hover { background-color: #c81d14; }
+html[lang] .hover\:bg-amber-700:hover { background-color: #a8170f; }
+html[lang] .hover\:bg-amber-800:hover { background-color: #8a120c; }
+html[lang] .active\:bg-amber-700:active { background-color: #a8170f; }
+html[lang] .active\:bg-amber-800:active { background-color: #8a120c; }
+html[lang] .active\:bg-amber-900:active { background-color: #6b0e09; }
+
+html[lang] .text-amber-50  { color: #fdf2f2; }
+html[lang] .text-amber-500 { color: #e1251b; }
+html[lang] .text-amber-600 { color: #c81d14; }
+html[lang] .text-amber-700 { color: #a8170f; }
+html[lang] .text-amber-800 { color: #8a120c; }
+html[lang] .text-amber-900 { color: #6b0e09; }
+
+html[lang] .border-amber-200 { border-color: #f6c0bb; }
+html[lang] .border-amber-500 { border-color: #e1251b; }
+html[lang] .border-amber-600 { border-color: #c81d14; }
+html[lang] .border-amber-700 { border-color: #a8170f; }
+
+html[lang] .ring-amber-500 { --tw-ring-color: #e1251b; }
+html[lang] .focus\:ring-amber-500:focus { --tw-ring-color: #e1251b; }
+html[lang] .focus\:border-amber-500:focus { border-color: #e1251b; }
+
+/* Komponentstiler som bruker @apply bg-amber-* (f.eks. .btn-primary)
+   far farger bakt inn ved kompilering — overstyr eksplisitt. */
+html[lang] .btn-primary {
+  background-color: #c81d14;
+  border-color: rgba(168, 23, 15, 0.2);
+  color: #ffffff;
 }
+html[lang] .btn-primary:hover  { background-color: #a8170f; }
+html[lang] .btn-primary:active { background-color: #8a120c; }
 
 :root {
   /* Brand (Advania-rød) */
