@@ -1444,7 +1444,22 @@ class SuSoftService:
         
         Returns the susoft_order_id (orderNo) if successful.
         """
-        if not order.customer.susoft_customer_id:
+        # Bestem hvilken SuSoft-kunde fakturaen skal g\u00e5 til.
+        # Utsalg uten egen susoft_customer_id arver hovedkundens, slik at
+        # alle leveranser i en kjede faktureres p\u00e5 samme SuSoft-kunde.
+        invoice_susoft_id = order.customer.susoft_customer_id
+        if not invoice_susoft_id and order.customer.parent_customer_id:
+            from sqlalchemy.orm import object_session
+            session = object_session(order)
+            if session is not None:
+                parent = session.get(Customer, order.customer.parent_customer_id)
+                if parent and parent.susoft_customer_id:
+                    invoice_susoft_id = parent.susoft_customer_id
+                    logger.info(
+                        "Order %s: utsalg %s mangler SuSoft-ID, bruker hovedkundens (%s)",
+                        order.id, order.customer.id, invoice_susoft_id,
+                    )
+        if not invoice_susoft_id:
             raise SuSoftAPIError("Customer has no SuSoft ID")
 
         # IDEMPOTENS: Sjekk om SuSoft allerede har denne ordren
@@ -1492,9 +1507,11 @@ class SuSoftService:
             # alternativeId links back to our system (tenant-prefikset for
             # multi-tenant kollisjons-trygghet).
             "alternativeId": alt_id,
-            # Customer reference (SuSoft Customer object with just id)
+            # Customer reference (SuSoft Customer object with just id).
+            # Bruker invoice_susoft_id slik at utsalg arver hovedkundens ID
+            # n\u00e5r utsalget selv mangler SuSoft-kobling.
             "customer": {
-                "id": order.customer.susoft_customer_id
+                "id": invoice_susoft_id
             },
             # Delivery date (ISO format with time for SuSoft)
             "deliveryDate": order.delivery_date.strftime("%Y-%m-%dT00:00:00"),

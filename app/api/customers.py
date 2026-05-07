@@ -463,6 +463,10 @@ async def create_outlet(
         order_lead_days=parent.order_lead_days,
         delivers_on_holidays=parent.delivers_on_holidays,
         country=parent.country,
+        # Arv hovedkundens SuSoft-ID slik at fakturering g\u00e5r mot samme
+        # SuSoft-kunde som hovedkunden. Kan overstyres senere ved \u00e5 fylle
+        # inn en egen susoft_customer_id p\u00e5 utsalget.
+        susoft_customer_id=parent.susoft_customer_id,
         **data.model_dump(),
     )
     db.add(outlet)
