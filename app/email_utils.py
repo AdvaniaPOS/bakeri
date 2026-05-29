@@ -112,6 +112,26 @@ def _send_email_via_smtp(
         return False
 
 
+def _fallback_to_smtp_if_configured(
+    recipients: list[str],
+    subject: str,
+    html: str,
+    text: Optional[str] = None,
+    reply_to: Optional[str] = None,
+) -> bool:
+    if not _smtp_host():
+        return False
+
+    logger.warning("Faller tilbake til SMTP for transactional e-post til=%s", recipients)
+    return _send_email_via_smtp(
+        recipients,
+        subject,
+        html,
+        text=text,
+        reply_to=reply_to,
+    )
+
+
 def send_email(
     to: str | list[str],
     subject: str,
@@ -131,14 +151,14 @@ def send_email(
     api_key = _api_key()
 
     if not api_key:
-        if _smtp_host():
-            return _send_email_via_smtp(
-                recipients,
-                subject,
-                html,
-                text=text,
-                reply_to=reply_to,
-            )
+        if _fallback_to_smtp_if_configured(
+            recipients,
+            subject,
+            html,
+            text=text,
+            reply_to=reply_to,
+        ):
+            return True
         logger.info(
             "E-POST (dev/no-key) til=%s emne=%r\n%s",
             recipients, subject, text or html,
@@ -172,11 +192,27 @@ def send_email(
                 "Resend feilet (status=%d) til=%s: %s",
                 resp.status_code, recipients, resp.text[:500],
             )
+            if _fallback_to_smtp_if_configured(
+                recipients,
+                subject,
+                html,
+                text=text,
+                reply_to=reply_to,
+            ):
+                return True
             return False
         logger.info("E-post sendt til=%s emne=%r", recipients, subject)
         return True
     except Exception as e:
         logger.exception("Resend exception til=%s: %s", recipients, e)
+        if _fallback_to_smtp_if_configured(
+            recipients,
+            subject,
+            html,
+            text=text,
+            reply_to=reply_to,
+        ):
+            return True
         return False
 
 

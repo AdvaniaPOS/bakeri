@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import httpx
+
 from app import email_utils
 
 
@@ -90,3 +92,93 @@ def test_send_email_uses_starttls_when_smtp_user_is_configured(monkeypatch):
     smtp = state["smtp"]
     assert smtp.started_tls is True
     assert smtp.logged_in == ("mailer", "secret")
+
+
+def test_send_email_falls_back_to_smtp_when_resend_returns_error(monkeypatch):
+    state = {}
+
+    class _FakeResponse:
+        status_code = 401
+        text = '{"message":"API key is invalid"}'
+
+    class _FakeHttpClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, json=None, headers=None):
+            state["resend"] = {
+                "url": url,
+                "json": json,
+                "headers": headers,
+            }
+            return _FakeResponse()
+
+    def _smtp_factory(host, port, timeout):
+        state["smtp"] = _FakeSMTP(host, port, timeout)
+        return state["smtp"]
+
+    monkeypatch.setenv("RESEND_API_KEY", "re_invalid")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_PORT", "2525")
+    monkeypatch.setenv("ALERT_FROM_EMAIL", "alerts@example.test")
+    monkeypatch.setattr(email_utils.httpx, "Client", _FakeHttpClient)
+    monkeypatch.setattr(email_utils.smtplib, "SMTP", _smtp_factory)
+
+    ok = email_utils.send_email(
+        to="kunde@example.test",
+        subject="Nullstill passord",
+        html="<p>Hei</p>",
+        text="Hei",
+    )
+
+    assert ok is True
+    assert state["resend"]["url"] == email_utils.RESEND_ENDPOINT
+    smtp = state["smtp"]
+    assert smtp.sent is not None
+    assert smtp.sent["to"] == ["kunde@example.test"]
+
+
+def test_send_email_falls_back_to_smtp_when_resend_raises(monkeypatch):
+    state = {}
+
+    class _FakeHttpClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, json=None, headers=None):
+            raise httpx.ConnectError("boom")
+
+    def _smtp_factory(host, port, timeout):
+        state["smtp"] = _FakeSMTP(host, port, timeout)
+        return state["smtp"]
+
+    monkeypatch.setenv("RESEND_API_KEY", "re_invalid")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_PORT", "2525")
+    monkeypatch.setenv("ALERT_FROM_EMAIL", "alerts@example.test")
+    monkeypatch.setattr(email_utils.httpx, "Client", _FakeHttpClient)
+    monkeypatch.setattr(email_utils.smtplib, "SMTP", _smtp_factory)
+
+    ok = email_utils.send_email(
+        to="kunde@example.test",
+        subject="Nullstill passord",
+        html="<p>Hei</p>",
+        text="Hei",
+    )
+
+    assert ok is True
+    smtp = state["smtp"]
+    assert smtp.sent is not None
+    assert smtp.sent["to"] == ["kunde@example.test"]
