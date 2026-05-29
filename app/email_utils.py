@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import logging
 import os
+import smtplib
 import uuid
+from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 from typing import Optional
 
 import httpx
@@ -42,8 +45,71 @@ def _from_address() -> str:
     return f"{name} <{email}>"
 
 
+def _smtp_host() -> Optional[str]:
+    host = (os.getenv("SMTP_HOST") or "").strip()
+    return host or None
+
+
+def _smtp_port() -> int:
+    return int(os.getenv("SMTP_PORT") or "587")
+
+
+def _smtp_user() -> str:
+    return (os.getenv("SMTP_USER") or "").strip()
+
+
+def _smtp_pass() -> str:
+    return os.getenv("SMTP_PASS") or ""
+
+
+def _smtp_from_header() -> str:
+    name = os.getenv("RESEND_FROM_NAME") or "Bakeri"
+    email = (
+        os.getenv("ALERT_FROM_EMAIL")
+        or os.getenv("RESEND_FROM_EMAIL")
+        or "no-reply@localhost"
+    )
+    return formataddr((name, email))
+
+
+def _smtp_from_email() -> str:
+    _, address = parseaddr(_smtp_from_header())
+    return address or "no-reply@localhost"
+
+
 def _public_base_url() -> str:
     return (os.getenv("PUBLIC_BASE_URL") or "http://localhost:5173").rstrip("/")
+
+
+def _send_email_via_smtp(
+    recipients: list[str],
+    subject: str,
+    html: str,
+    text: Optional[str] = None,
+    reply_to: Optional[str] = None,
+) -> bool:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = _smtp_from_header()
+    msg["To"] = ", ".join(recipients)
+    if reply_to:
+        msg["Reply-To"] = reply_to
+
+    msg.set_content(text or "Denne e-posten krever en HTML-kompatibel klient.")
+    msg.add_alternative(html, subtype="html")
+
+    try:
+        with smtplib.SMTP(_smtp_host(), _smtp_port(), timeout=10) as server:
+            smtp_user = _smtp_user()
+            if smtp_user:
+                server.starttls()
+                server.login(smtp_user, _smtp_pass())
+            server.send_message(msg, from_addr=_smtp_from_email(), to_addrs=recipients)
+        logger.info("E-post sendt via SMTP til=%s emne=%r", recipients, subject)
+        return True
+    except Exception as e:
+        logger.exception("SMTP exception til=%s: %s", recipients, e)
+        return False
 
 
 def send_email(
@@ -65,6 +131,14 @@ def send_email(
     api_key = _api_key()
 
     if not api_key:
+        if _smtp_host():
+            return _send_email_via_smtp(
+                recipients,
+                subject,
+                html,
+                text=text,
+                reply_to=reply_to,
+            )
         logger.info(
             "E-POST (dev/no-key) til=%s emne=%r\n%s",
             recipients, subject, text or html,
