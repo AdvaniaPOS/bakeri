@@ -129,8 +129,8 @@ class ChangePasswordRequest(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    """Be om e-post med nullstillings-lenke."""
-    email: EmailStr
+    """Be om nullstillings-lenke med e-post eller brukernavn."""
+    email: str = Field(..., min_length=1, max_length=255)
 
 
 class ResetPasswordRequest(BaseModel):
@@ -696,8 +696,19 @@ async def forgot_password(
     import secrets as _secrets
     from ..email_utils import send_password_reset
 
-    email = request.email.lower().strip()
-    user = db.query(User).filter(User.email == email).first()
+    login_value = request.email.lower().strip()
+    candidate_emails = [login_value]
+    if "@" not in login_value:
+        candidate_emails.extend([
+            f"{login_value}@bakeri.local",
+            f"{login_value}@susoft.local",
+        ])
+
+    user = None
+    for candidate in dict.fromkeys(candidate_emails):
+        user = db.query(User).filter(User.email == candidate).first()
+        if user:
+            break
 
     # Bare reelle, lokale, aktive brukere får e-post.
     # SuSoft-brukere (password_hash == "__susoft__") må nullstille i SuSoft.
@@ -715,7 +726,12 @@ async def forgot_password(
             tenant_name=tenant.name if tenant else "Bakeri",
         )
 
-    return {"message": "Hvis e-posten finnes i systemet, har vi sendt en lenke for nullstilling."}
+    return {
+        "message": (
+            "Hvis innloggingen din er lokal, har vi sendt en lenke for nullstilling. "
+            "Hvis du logger inn via SuSoft, må passordet endres der eller av administrator."
+        )
+    }
 
 
 @router.post("/reset-password")

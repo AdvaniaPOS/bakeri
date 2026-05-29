@@ -68,6 +68,29 @@ def test_login_wrong_password(client, admin_user):
     assert r.status_code in (401, 503)  # 503 hvis Susoft-fallback prøver og feiler
 
 
+def test_forgot_password_accepts_username_for_susoft_user(client, db_session, tenant):
+    user = User(
+        tenant_id=tenant.id,
+        email="demo-user@susoft.local",
+        password_hash="__susoft__",
+        first_name="Demo",
+        last_name="User",
+        role=UserRole.TENANT_ADMIN,
+        is_active=True,
+        email_verified=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    r = client.post("/api/v1/auth/forgot-password", json={"email": "demo-user"})
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert "SuSoft" in body["message"]
+
+    db_session.refresh(user)
+    assert user.password_reset_token is None
+
+
 def test_unauthenticated_products_endpoint(client):
     r = client.get("/api/v1/products")
     assert r.status_code in (401, 403)
