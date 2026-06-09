@@ -2,7 +2,7 @@
 Cut-off-vakt: sentralisert sjekk for om en ordre kan endres.
 
 Tidligere lå dette som et statisk DB-felt (`is_locked`) som ble satt av en
-Celery-jobb kl. 15:00. Det er en risiko: hvis Celery er nede, kan ordrer
+Celery-jobb ved cut-off. Det er en risiko: hvis Celery er nede, kan ordrer
 endres etter cut-off.
 
 Nå er sannheten kode-basert (computed) via `is_order_locked()`.
@@ -11,7 +11,7 @@ men det er IKKE autoritært for sjekken.
 """
 from fastapi import HTTPException, status
 
-from .time_utils import is_past_cutoff, now_oslo, to_naive_utc
+from .time_utils import CUTOFF_HOUR, CUTOFF_MINUTE, is_past_cutoff, now_oslo, to_naive_utc
 
 
 def is_order_locked(order) -> bool:
@@ -57,7 +57,7 @@ def ensure_editable(order, *, user=None) -> None:
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
             detail=(
-                f"Ordren er låst. Cut-off var kl. 15:00 dagen før levering "
+                f"Ordren er låst. Cut-off var kl. {CUTOFF_HOUR:02d}:{CUTOFF_MINUTE:02d} dagen før levering "
                 f"({order.delivery_date}). Endringer er ikke tillatt."
             ),
         )

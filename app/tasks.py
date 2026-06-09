@@ -15,7 +15,7 @@ from celery.schedules import crontab
 
 from .database import SessionLocal
 from .models import Order, Customer, SyncStatus, ScheduledTaskRun
-from .time_utils import now_oslo, today_oslo, to_naive_utc, now_utc
+from .time_utils import CUTOFF_HOUR, CUTOFF_MINUTE, now_oslo, today_oslo, to_naive_utc, now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ celery_app.conf.beat_schedule = {
     # den er IKKE lønger autoritær for tilgangskontroll.
     "stamp-cutoff-locks": {
         "task": "app.tasks.apply_cutoff_locks",
-        "schedule": crontab(hour=15, minute=0),
+        "schedule": crontab(hour=CUTOFF_HOUR, minute=CUTOFF_MINUTE),
     },
     # Retry failed syncs at 06:00 (next morning fallback for ordrer som har
     # fått for mange retries og er parkert)

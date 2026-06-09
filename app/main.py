@@ -8,10 +8,11 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .database import init_db
 from .logging_config import setup_logging
-from .middleware import TenantContextMiddleware
+from .middleware import TenantContextMiddleware, SecurityHeadersMiddleware
 from .rate_limit import RateLimitMiddleware
 from .api import customers, products, pricing, templates, orders, admin, routes, reports, susoft_sync, auth, overrides, production, driver, portal, notifications
 
@@ -124,7 +125,7 @@ app = FastAPI(
     - **Order Matrix**: 7-day template per customer for recurring orders
     - **Order Generation**: Auto-generate orders 14-30 days in advance
     - **Ad-hoc Changes**: Override quantities without breaking templates
-    - **Cut-off Time**: Lock orders at 15:00 day before delivery
+    - **Cut-off Time**: Lock orders at 10:00 day before delivery
     - **Holiday Handling**: Automatic zero quantity for holidays
     - **SuSoft Sync**: Reliable sync with retry logic
     - **Audit Trail**: Full tracking of all changes
@@ -139,10 +140,19 @@ app = FastAPI(
 #   CORS_ALLOW_ORIGINS="https://app.lampeland.no,https://admin.lampeland.no"
 # In dev (default) we allow Vite + common localhost origins.
 _cors_env = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+_app_env = os.getenv("APP_ENV", "development").lower()
 if _cors_env:
     _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
     _cors_regex = None
 else:
+    if _app_env == "production":
+        # Hard-fail i produksjon: vi tillater ALDRI permissive defaults i prod.
+        # Sett CORS_ALLOW_ORIGINS i .env / systemd-environment før (re)start.
+        raise RuntimeError(
+            "CORS_ALLOW_ORIGINS er ikke satt, men APP_ENV=production. "
+            "Sett eksplisitt liste over tillatte origins (kommaseparert) "
+            "for å unngå å åpne API-et for vilkårlige nettsteder."
+        )
     _cors_origins = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -151,6 +161,34 @@ else:
     ]
     _cors_regex = r"^http://(localhost|127\.0\.0\.1):\d+$"
 
+# TrustedHostMiddleware: blokkerer Host-header-angrep / DNS-rebinding.
+# Sett TRUSTED_HOSTS som kommaseparert liste i prod, f.eks.
+#   TRUSTED_HOSTS="bakeri.poshub.no,api.bakeri.poshub.no"
+# I dev (default) tillates alt for å ikke knekke localhost/127.0.0.1/lan-IP.
+_trusted_hosts_env = os.getenv("TRUSTED_HOSTS", "").strip()
+if not _trusted_hosts_env and _app_env == "production":
+    raise RuntimeError(
+        "TRUSTED_HOSTS er ikke satt, men APP_ENV=production. "
+        "Sett liste over gyldige Host-headers (kommaseparert) for å hindre "
+        "Host-header / DNS-rebinding-angrep."
+    )
+
+# Middleware stack — Starlette wrapper i OMVENDT rekkefølge, så det som
+# legges til SIST blir YTTERST og kjører FØRST på request, SIST på response.
+# Ønsket request-flyt (ytterst → innerst):
+#   TrustedHost → CORS → SecurityHeaders → RateLimit → TenantContext → route
+# Det betyr at vi MÅ legge til i denne rekkefølgen (innerst først):
+
+# Innerst: populer logging-kontekst (tenant_id, user_id, request_id).
+app.add_middleware(TenantContextMiddleware)
+
+# Rate limiting per tenant (parser auth selv).
+app.add_middleware(RateLimitMiddleware)
+
+# Sikkerhets-headers settes på ALLE responser (også 429/500/etc.).
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS (preflight håndteres her).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -161,12 +199,11 @@ app.add_middleware(
     expose_headers=["X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
 )
 
-# Rate limiting (per-tenant). Added BEFORE TenantContextMiddleware so the
-# 429 response still benefits from request-id, but auth parsing happens here too.
-app.add_middleware(RateLimitMiddleware)
+# Ytterst: TrustedHost — avvis ugyldig Host-header umiddelbart.
+if _trusted_hosts_env:
+    _trusted_hosts = [h.strip() for h in _trusted_hosts_env.split(",") if h.strip()]
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts)
 
-# Populate logging context (tenant_id, user_id, request_id) for every request.
-app.add_middleware(TenantContextMiddleware)
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1")  # Auth endpoints (no authentication required)

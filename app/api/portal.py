@@ -9,7 +9,7 @@ En portal-bruker er knyttet til \u00e9n Customer via User.customer_id.
 Hvis kunden er en hovedkunde, kan brukeren ogs\u00e5 se / bestille
 for alle sub_outlets (utsalg).
 
-Cutoff (15:00 dagen f\u00f8r) gjelder ogs\u00e5 her \u2014 kunden kan ikke
+Cutoff (10:00 dagen f\u00f8r) gjelder ogs\u00e5 her \u2014 kunden kan ikke
 endre l\u00e5ste ordrer.
 """
 from datetime import date, timedelta

@@ -418,13 +418,26 @@ function CompanyInfoCard({ authFetch, tenant, updateTenant }) {
 
 const WEEKDAY_LABELS = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag'];
 const WEEKDAY_SHORT  = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
+const DEFAULT_DELIVERY_CUTOFF_TIME = { h: 10, m: 0 };
+const DEFAULT_DELIVERY_CUTOFFS = [
+  { dw: 0, cw: 3, h: 10, m: 0 },
+  { dw: 1, cw: 4, h: 10, m: 0 },
+  { dw: 2, cw: 1, h: 10, m: 0 },
+  { dw: 3, cw: 2, h: 10, m: 0 },
+  { dw: 4, cw: 3, h: 10, m: 0 },
+];
+
+function defaultDeliveryCutoffRule(dw) {
+  return DEFAULT_DELIVERY_CUTOFFS.find((rule) => rule.dw === dw)
+    || { dw, cw: (dw === 0 ? 3 : (dw - 1 + 7) % 7), h: DEFAULT_DELIVERY_CUTOFF_TIME.h, m: DEFAULT_DELIVERY_CUTOFF_TIME.m };
+}
 
 function DeliveryCutoffsEditor({ value, onChange }) {
   // value = list of {dw, cw, h, m}. Map by dw for quick lookup.
   const byDw = new Map(value.map(r => [r.dw, r]));
 
   const setRule = (dw, patch) => {
-    const existing = byDw.get(dw) || { dw, cw: (dw === 0 ? 3 : (dw - 1 + 7) % 7), h: 15, m: 0 };
+    const existing = byDw.get(dw) || defaultDeliveryCutoffRule(dw);
     const next = { ...existing, ...patch, dw };
     const others = value.filter(r => r.dw !== dw);
     onChange([...others, next].sort((a, b) => a.dw - b.dw));
@@ -432,9 +445,8 @@ function DeliveryCutoffsEditor({ value, onChange }) {
 
   const toggleDay = (dw, enabled) => {
     if (enabled) {
-      // Default: cutoff = previous weekday at 15:00
-      const cw = (dw - 1 + 7) % 7;
-      setRule(dw, { cw, h: 15, m: 0 });
+      // Match backend standard defaults when a delivery day is enabled.
+      setRule(dw, defaultDeliveryCutoffRule(dw));
     } else {
       onChange(value.filter(r => r.dw !== dw));
     }
@@ -482,7 +494,7 @@ function DeliveryCutoffsEditor({ value, onChange }) {
                 disabled={!enabled}
                 value={enabled
                   ? `${String(rule.h).padStart(2, '0')}:${String(rule.m).padStart(2, '0')}`
-                  : '15:00'}
+                  : '10:00'}
                 onChange={(e) => {
                   const [h, m] = e.target.value.split(':').map(n => parseInt(n, 10));
                   setRule(dw, { h, m });
@@ -1189,7 +1201,10 @@ export default function Settings() {
         )}
 
         {/* 2FA / TOTP */}
-        <TwoFactorCard authFetch={authFetch} />
+        <TwoFactorCard
+          authFetch={authFetch}
+          autoStart={typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mfa') === 'setup'}
+        />
 
         {/* Bakeri-innstillinger */}
         <div className="card">
@@ -1356,19 +1371,14 @@ export default function Settings() {
           <DeliveryCutoffsEditor
             value={Array.isArray(tenantSettings.delivery_cutoffs?.value)
               ? tenantSettings.delivery_cutoffs.value
-              : [
-                  { dw: 0, cw: 3, h: 15, m: 0 },
-                  { dw: 1, cw: 4, h: 15, m: 0 },
-                  { dw: 2, cw: 1, h: 15, m: 0 },
-                  { dw: 3, cw: 2, h: 15, m: 0 },
-                  { dw: 4, cw: 3, h: 15, m: 0 },
-                ]}
+              : DEFAULT_DELIVERY_CUTOFFS}
             onChange={(next) => updateSetting('delivery_cutoffs', next)}
           />
 
           <div className="text-xs text-gray-600 bg-amber-50 border border-amber-200 rounded p-3 mt-4">
-            <strong>Standard:</strong> Mandag-levering må bestilles før Torsdag 15:00 (siden bakeriet ikke
-            jobber i helga). Fredag-levering før Torsdag 15:00. Produkter med produksjonsdager øker
+            <strong>Standard:</strong> Mandag-levering må bestilles før Torsdag 10:00 (siden bakeriet ikke
+            jobber i helga). Tirsdag-levering før Fredag 10:00. Fredag-levering før Torsdag 10:00.
+            Produkter med produksjonsdager øker
             ventetida ytterligere.
           </div>
 

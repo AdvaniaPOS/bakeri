@@ -3,6 +3,8 @@
 
 > **For GitHub Copilot**: Dette dokumentet beskriver alle komponenter, datamodeller, API-endepunkter og forretningsregler for systemet. Bruk dette som referanse når du genererer kode.
 
+> **Statusnotat juni 2026**: Dokumentet startet som en kombinasjon av spesifikasjon og målarkitektur. Flere av delene under er nå implementert i kodebasen. Der kodesnittene er forenklede eller ikke lenger er helt 1:1 med repoet, er faktisk kode i `app/` og `frontend/src/` gjeldende sannhetskilde.
+
 ---
 
 ## 0. API-VERSJONERING OG DEPRECATION
@@ -42,11 +44,32 @@ Cache:    Redis (for Celery)
 API:      Susoft REST API v3.1 (https://api.susoft.com:4443)
 ```
 
+### 1.3 Implementasjonsstatus (Juni 2026)
+
+| Område | Status | Kommentar |
+|---|---|---|
+| Ruteplanlegging | Klar for test | Modell, API, postnummerregler og adminside finnes i kodebasen. |
+| Produksjonsrapporter | Klar for test | Dagsrapport, ukeoversikt, batch-plan og PDF-endepunkter finnes. |
+| Ordreflyt og cutoff | Klar for test | Cutoff beregnes i kode og brukes i ordre- og portalflyt. |
+| Susoft-synkronisering | Satt i gang | Integrasjonen er omfattende, men observabilitet og ledervennlig status bør styrkes. |
+| Sikkerhet og MFA | Klar for test | Tenant-scope, roller, refresh tokens og MFA-støtte finnes. |
+| Drift og helse | Satt i gang | Celery-jobber, statusendepunkter og innstillinger finnes, men kan strammes opp operativt. |
+
+### 1.4 Nærmeste arkitekturfokus
+
+- Verifisere ende-til-ende flyt for ruter, produksjon og cutoff.
+- Gjøre sync-status og retry mot Susoft tydeligere i drift og admin.
+- Ferdigstille prislogikk og audit-spor med konsekvent oppdatering av fremtidige ordrer.
+- Bruke statusene `Klar for test` og `Ferdig` mer bevisst i prosjektstyringen.
+
 ---
 
 ## 2. DATAMODELLER
 
-### 2.1 Route (MANGLER - MÅ IMPLEMENTERES)
+### 2.1 Route (Implementert i app/models.py)
+
+Denne modellen er implementert og utvidet i faktisk kode. Dagens implementasjon er tenant-scoped og inkluderer også relasjon for postnummerregler (`RoutePostalRule`).
+
 ```python
 # Legg til i app/models.py
 
@@ -93,7 +116,10 @@ class Route(Base, TimestampMixin):
     )
 ```
 
-### 2.2 Oppdater Customer-modellen
+### 2.2 Customer route-kobling (Implementert)
+
+Kundemodellen er oppdatert i kodebasen med `route_id` og relasjon til `Route`.
+
 ```python
 # Legg til i Customer-klassen i app/models.py
 
@@ -104,12 +130,15 @@ class Route(Base, TimestampMixin):
     route: Mapped[Optional["Route"]] = relationship(back_populates="customers")
 ```
 
-### 2.3 DailyProductionSummary (NY - For produksjonsrapporter)
+### 2.3 DailyProductionSummary (Implementert for produksjonsrapporter)
+
+Denne modellen finnes i kodebasen og brukes som del av produksjons- og adminrelatert funksjonalitet.
+
 ```python
 class DailyProductionSummary(Base, TimestampMixin):
     """
     Aggregert produksjonsrapport per dag.
-    Genereres automatisk når ordrer låses (kl 15:00 dagen før).
+  Genereres automatisk når ordrer låses (kl 10:00 dagen før).
     """
     __tablename__ = "daily_production_summaries"
 
@@ -148,7 +177,10 @@ class DailyProductionSummary(Base, TimestampMixin):
 
 ## 3. API ENDEPUNKTER
 
-### 3.1 Routes API (NY FIL: app/api/routes.py)
+### 3.1 Routes API (Implementert: app/api/routes.py)
+
+Routes API er implementert og rikere enn den første skissen under. Faktisk kode inkluderer tenant-scope, feature flag, kundetildeling, reordering, postnummerregler og auto-assignment-relatert funksjonalitet.
+
 ```python
 """
 Route management API endpoints.
@@ -285,7 +317,10 @@ async def get_route_orders(
     return orders
 ```
 
-### 3.2 Production Reports API (NY FIL: app/api/reports.py)
+### 3.2 Production Reports API (Implementert: app/api/reports.py)
+
+Reports API er implementert og inneholder i dag blant annet dagsrapport, ukeoversikt, batch-plan, kjørelister, Google Maps-lenker og PDF-endepunkter.
+
 ```python
 """
 Production and delivery reports API.
@@ -1421,7 +1456,7 @@ def generate_production_report(target_date: date):
     """
     Generer aggregert produksjonsrapport for en dato.
     
-    Kjøres automatisk når ordrer låses (kl 15:00 dagen før).
+  Kjøres automatisk når ordrer låses (kl 10:00 dagen før).
     """
     from sqlalchemy import func
     
@@ -1488,7 +1523,10 @@ def generate_production_report(target_date: date):
 
 ## 7. FRONTEND KOMPONENTER
 
-### 7.1 Routes Page (Ny fil: frontend/src/pages/Routes.jsx)
+### 7.1 Routes Page (Implementert: frontend/src/pages/RoutesPage.jsx)
+
+Den første skissen under er forenklet. Faktisk implementasjon bruker autentisert `authFetch` og inneholder blant annet kundetildeling, postnummerregler, auto-assign-preview og administrasjon av valgt rute.
+
 ```jsx
 import { useState, useEffect } from 'react';
 
@@ -1634,7 +1672,10 @@ export default function Routes() {
 }
 ```
 
-### 7.2 Production Report Page (Ny fil: frontend/src/pages/ProductionReport.jsx)
+### 7.2 Production Report Page (Implementert: frontend/src/pages/ProductionReport.jsx)
+
+Denne siden er implementert og støtter i dag dagsvisning, ukeoversikt, batch-plan og PDF-visning.
+
 ```jsx
 import { useState, useEffect } from 'react';
 
@@ -1757,7 +1798,10 @@ export default function ProductionReport() {
 }
 ```
 
-### 7.3 Delivery List Page (Ny fil: frontend/src/pages/DeliveryList.jsx)
+### 7.3 Delivery List Page (Implementert: frontend/src/pages/DeliveryList.jsx)
+
+Delivery list-siden finnes i kodebasen og er en del av rute- og leveringsflyten. Videre arbeid bør fokusere på verifisering med reelle rutedata og operativ bruk.
+
 ```jsx
 import { useState, useEffect } from 'react';
 
@@ -1985,7 +2029,7 @@ GOOGLE_MAPS_API_KEY=your_api_key
 # App settings
 SECRET_KEY=your-secret-key-here
 DEBUG=true
-CUTOFF_HOUR=15
+CUTOFF_HOUR=10
 ```
 
 ---
@@ -2024,7 +2068,7 @@ cd frontend && npm run dev
 
 2. **Susoft-sync**: Ordrer sendes til Susoft 48 timer før levering med `isForInvoicing: true`
 
-3. **Cutoff-tid**: Kl 15:00 dagen før levering låses ordrer for endringer
+3. **Cutoff-tid**: Kl 10:00 dagen før levering låses ordrer for endringer
 
 4. **Priser**: 
    - Standardpris hentes fra Susoft

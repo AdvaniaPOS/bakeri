@@ -79,7 +79,7 @@ export default function PortalLayout() {
         }}} />
       </main>
       <footer className="text-center text-xs text-amber-700 py-4">
-        Bestillingsportal · Cutoff er kl. 15:00 dagen før levering
+        Bestillingsportal · Cutoff er kl. 10:00 dagen før levering
       </footer>
     </div>
   );

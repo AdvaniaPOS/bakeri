@@ -15,16 +15,27 @@ import advaniaLogo from '../assets/advania-logo.svg';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login, loading, error } = useAuth();
+  const { login, loading, error, requestEmailMfaCode } = useAuth();
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [twoFactorRequired, setTwoFactorRequired] = useState(false);
+  const [mfaMethod, setMfaMethod] = useState('totp'); // 'email' | 'totp'
+  const [mfaInfo, setMfaInfo] = useState(null);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [totpCode, setTotpCode] = useState('');
   const [localError, setLocalError] = useState(null);
   const [theme, setTheme] = useState(getStoredTheme);
   useEffect(() => { applyTheme(theme); }, [theme]);
+
+  // Telleren ned for "send på nytt"-knapp
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown(s => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -38,12 +49,39 @@ export default function Login() {
     const result = await login(email, password, totpCode || undefined);
 
     if (result.success) {
-      navigate('/');
+      if (result.mustSetupMfa) {
+        navigate('/innstillinger?mfa=setup', { replace: true });
+      } else {
+        navigate('/');
+      }
     } else if (result.twoFactorRequired) {
       setTwoFactorRequired(true);
-      setLocalError('Skriv inn 2FA-koden fra autentiseringsappen din');
+      setMfaMethod(result.mfaMethod || 'totp');
+      setMfaInfo(result.message || null);
+      // For e-post: vi trenger ikke å trigge resend manuelt — backend
+      // sendte koden automatisk ved første login-forsøk.
+      if (result.mfaMethod === 'email') {
+        setResendCooldown(30);
+      }
     } else {
       setLocalError(result.error);
+    }
+  };
+
+  const handleResend = async () => {
+    if (resendBusy || resendCooldown > 0) return;
+    setResendBusy(true);
+    setLocalError(null);
+    try {
+      const ok = await requestEmailMfaCode(email, password);
+      if (ok) {
+        setMfaInfo('Ny kode sendt på e-post');
+        setResendCooldown(30);
+      } else {
+        setLocalError('Kunne ikke sende ny kode');
+      }
+    } finally {
+      setResendBusy(false);
     }
   };
 
@@ -135,7 +173,7 @@ export default function Login() {
             {twoFactorRequired && (
               <div>
                 <label htmlFor="totp" className="block text-sm font-medium text-gray-700 mb-1">
-                  2FA-kode
+                  {mfaMethod === 'email' ? 'Kode fra e-post' : '2FA-kode'}
                 </label>
                 <input
                   id="totp"
@@ -150,7 +188,25 @@ export default function Login() {
                   placeholder="123456"
                   autoFocus
                 />
-                <p className="text-xs text-gray-500 mt-1">6-sifret kode fra autentiseringsappen din</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {mfaInfo || (
+                    mfaMethod === 'email'
+                      ? `Vi har sendt en 6-sifret kode til ${email}`
+                      : '6-sifret kode fra autentiseringsappen din'
+                  )}
+                </p>
+                {mfaMethod === 'email' && (
+                  <button
+                    type="button"
+                    onClick={handleResend}
+                    disabled={resendBusy || resendCooldown > 0}
+                    className="text-xs text-amber-600 hover:text-amber-700 mt-1 disabled:opacity-50"
+                  >
+                    {resendCooldown > 0
+                      ? `Send på nytt om ${resendCooldown}s`
+                      : (resendBusy ? 'Sender…' : 'Send koden på nytt')}
+                  </button>
+                )}
               </div>
             )}
 
@@ -167,9 +223,9 @@ export default function Login() {
                   Husk meg
                 </label>
               </div>
-              <a href="/glemt-passord" className="text-sm text-amber-600 hover:text-amber-700">
+              <Link to="/glemt-passord" className="text-sm text-amber-600 hover:text-amber-700">
                 Glemt passord?
-              </a>
+              </Link>
             </div>
 
             {/* Submit button */}

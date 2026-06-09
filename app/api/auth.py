@@ -75,6 +75,10 @@ class LoginRequest(BaseModel):
     """Login request with SuSoft login (email or username) and password."""
     email: str = Field(..., min_length=1)
     password: str
+    # MFA-kode (6-8 siffer/tegn). Brukes for både e-post-engangskode og TOTP
+    # fra autentiserings-app. `totp_code` beholdes som alias for
+    # bakoverkompatibilitet med eldre frontend-versjoner.
+    mfa_code: Optional[str] = Field(default=None, min_length=6, max_length=8)
     totp_code: Optional[str] = Field(default=None, min_length=6, max_length=8)
 
 
@@ -86,6 +90,9 @@ class LoginResponse(BaseModel):
     expires_in: int
     user: dict
     tenant: Optional[dict] = None
+    # True dersom brukeren MÅ sette opp 2FA før de får full tilgang
+    # (gjelder admin-roller). Frontend skal da vise tvunget oppsett-skjerm.
+    must_setup_mfa: bool = False
 
 
 class RegisterTenantRequest(BaseModel):
@@ -187,6 +194,107 @@ class TenantInfoUpdateRequest(BaseModel):
 
 
 # =============================================================================
+# 2FA-HJELPERE
+# =============================================================================
+
+# Roller som TVINGES til å ha 2FA aktivert (e-post eller TOTP).
+# Andre roller kan velge selv via Innstillinger.
+MFA_REQUIRED_ROLES: tuple[UserRole, ...] = (
+    UserRole.SUPER_ADMIN,
+    UserRole.TENANT_ADMIN,
+)
+
+
+def _user_has_mfa(user: User) -> bool:
+    """True hvis brukeren har en aktiv 2FA-metode."""
+    method = (user.mfa_method or "none").lower()
+    if method == "email":
+        return True
+    if method == "totp" and bool(user.totp_enabled) and bool(user.totp_secret):
+        return True
+    # Bakoverkompat: hvis totp_enabled er satt fra før uten mfa_method
+    if bool(user.totp_enabled) and bool(user.totp_secret):
+        return True
+    return False
+
+
+def _must_setup_mfa(user: User) -> bool:
+    """True hvis brukeren MÅ sette opp 2FA før de får full tilgang."""
+    if user.role not in MFA_REQUIRED_ROLES:
+        return False
+    return not _user_has_mfa(user)
+
+
+def _verify_mfa_for_login(
+    db: Session,
+    user: User,
+    submitted_code: Optional[str],
+    *,
+    ip_address: Optional[str] = None,
+) -> None:
+    """Håndter 2FA-trinn av innloggingen for en lokal bruker.
+
+    * Hvis bruker ikke har MFA aktiv → no-op.
+    * Hvis MFA er TOTP → krev gyldig kode.
+    * Hvis MFA er e-post → hvis ingen kode oppgitt: send kode + 401.
+                          Hvis kode oppgitt: verifiser.
+
+    Kaster `HTTPException(401)` med headers `X-2FA-Required: true` og
+    `X-2FA-Method: email|totp` når mer info trengs.
+    """
+    method = (user.mfa_method or "none").lower()
+    # Bakoverkompat: hvis ingen metode satt men TOTP er aktiv → behandle som TOTP
+    if method == "none" and user.totp_enabled and user.totp_secret:
+        method = "totp"
+
+    if method == "none":
+        return
+
+    code = (submitted_code or "").strip() or None
+
+    if method == "totp":
+        if not code:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="2FA-kode kreves",
+                headers={"X-2FA-Required": "true", "X-2FA-Method": "totp"},
+            )
+        from ..two_factor import decrypt_totp_secret, verify_totp
+        secret = decrypt_totp_secret(user.totp_secret)
+        if not secret or not verify_totp(secret, code):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Ugyldig 2FA-kode",
+                headers={"X-2FA-Method": "totp"},
+            )
+        return
+
+    if method == "email":
+        from ..email_mfa import issue_and_send_code, verify_code as verify_email_code
+        if not code:
+            # Send ny kode (invaliderer evt. tidligere)
+            issue_and_send_code(db, user, ip_address=ip_address)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="2FA-kode sendt på e-post",
+                headers={"X-2FA-Required": "true", "X-2FA-Method": "email"},
+            )
+        if not verify_email_code(db, user, code):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Ugyldig eller utløpt 2FA-kode",
+                headers={"X-2FA-Method": "email"},
+            )
+        return
+
+    # Ukjent metode → fail-closed
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Ukjent 2FA-metode konfigurert",
+    )
+
+
+# =============================================================================
 # AUTHENTICATION ENDPOINTS
 # =============================================================================
 
@@ -226,21 +334,14 @@ async def login(
             if not tenant and not is_super_admin:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tenant not found")
 
-            # 2FA: hvis aktivert, krev gyldig TOTP-kode
-            if local_user.totp_enabled and local_user.totp_secret:
-                if not request.totp_code:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="2FA-kode kreves",
-                        headers={"X-2FA-Required": "true"},
-                    )
-                from ..two_factor import decrypt_totp_secret, verify_totp
-                secret = decrypt_totp_secret(local_user.totp_secret)
-                if not secret or not verify_totp(secret, request.totp_code):
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Ugyldig 2FA-kode",
-                    )
+            # 2FA: e-post-kode eller TOTP — håndteres av felles helper
+            client_ip = http_request.client.host if http_request.client else None
+            _verify_mfa_for_login(
+                db,
+                local_user,
+                request.mfa_code or request.totp_code,
+                ip_address=client_ip,
+            )
 
             token_pair = create_token_pair(
                 user_id=local_user.id,
@@ -263,6 +364,7 @@ async def login(
                     "role": local_user.role.value,
                 },
                 tenant=_tenant_to_dict(tenant) if tenant else None,
+                must_setup_mfa=_must_setup_mfa(local_user),
             )
         else:
             raise HTTPException(
@@ -375,6 +477,18 @@ async def login(
         if user.tenant_id is None:
             user.tenant_id = tenant.id
 
+    # Sørg for at brukeren er flushet/oppdatert før MFA-sjekk
+    db.flush()
+
+    # 2FA — gjelder også SuSoft-baserte brukere så snart de har valgt metode
+    client_ip = http_request.client.host if http_request.client else None
+    _verify_mfa_for_login(
+        db,
+        user,
+        request.mfa_code or request.totp_code,
+        ip_address=client_ip,
+    )
+
     # --- Create local JWT pair ---
     token_pair = create_token_pair(
         user_id=user.id,
@@ -398,6 +512,7 @@ async def login(
             "role": user.role.value,
         },
         tenant=_tenant_to_dict(tenant),
+        must_setup_mfa=_must_setup_mfa(user),
     )
 
 
@@ -1211,8 +1326,9 @@ async def two_factor_enable(
     if not secret or not verify_totp(secret, payload.code):
         raise HTTPException(status_code=400, detail="Ugyldig kode")
     current_user.totp_enabled = True
+    current_user.mfa_method = "totp"
     db.commit()
-    return {"enabled": True}
+    return {"enabled": True, "mfa_method": "totp"}
 
 
 @router.post("/2fa/disable")
@@ -1221,18 +1337,119 @@ async def two_factor_disable(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Slå av 2FA. Krever passord-bekreftelse."""
+    """Slå av 2FA. Krever passord-bekreftelse.
+
+    Admin-roller (SUPER_ADMIN/TENANT_ADMIN) kan IKKE slå av 2FA helt — de må
+    bytte til en annen metode (e-post eller TOTP).
+    """
     if not current_user.password_hash or current_user.password_hash == "__susoft__":
         raise HTTPException(status_code=400, detail="Ikke tilgjengelig for SuSoft-brukere")
     if not verify_password(payload.password, current_user.password_hash):
         raise HTTPException(status_code=401, detail="Feil passord")
+    if current_user.role in MFA_REQUIRED_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin-roller må ha 2FA aktivert. Bytt metode i stedet.",
+        )
     current_user.totp_enabled = False
     current_user.totp_secret = None
+    current_user.mfa_method = "none"
     db.commit()
-    return {"enabled": False}
+    return {"enabled": False, "mfa_method": "none"}
 
 
 @router.get("/2fa/status")
 async def two_factor_status(current_user: User = Depends(get_current_user)):
-    """Returner om 2FA er aktivert for innlogget bruker."""
-    return {"enabled": bool(current_user.totp_enabled)}
+    """Returner 2FA-status og aktiv metode for innlogget bruker."""
+    return {
+        "enabled": _user_has_mfa(current_user),
+        "mfa_method": (current_user.mfa_method or "none"),
+        "totp_enabled": bool(current_user.totp_enabled),
+        "must_setup": _must_setup_mfa(current_user),
+        "required": current_user.role in MFA_REQUIRED_ROLES,
+    }
+
+
+# -----------------------------------------------------------------------------
+# 2FA / E-POST (engangskode)
+# -----------------------------------------------------------------------------
+
+class EmailMfaSetupVerifyRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=8)
+
+
+class EmailMfaResendRequest(BaseModel):
+    """Be om ny e-post-kode under pågående innlogging.
+
+    Krever passord for å hindre e-post-spam mot vilkårlige adresser.
+    """
+    email: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+@router.post("/2fa/email/setup")
+async def email_mfa_setup(
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Start e-post-MFA: send en bekreftelseskode til brukerens e-post.
+
+    Brukeren må kalle `/2fa/email/verify-setup` med koden for å aktivere.
+    """
+    if not current_user.email:
+        raise HTTPException(status_code=400, detail="Brukeren mangler e-postadresse")
+    from ..email_mfa import issue_and_send_code
+    client_ip = http_request.client.host if http_request.client else None
+    issue_and_send_code(
+        db, current_user, ip_address=client_ip, purpose="aktivering av 2FA på e-post"
+    )
+    return {"sent_to": current_user.email}
+
+
+@router.post("/2fa/email/verify-setup")
+async def email_mfa_verify_setup(
+    payload: EmailMfaSetupVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bekreft e-post-MFA-oppsett ved å oppgi koden som ble sendt."""
+    from ..email_mfa import verify_code as verify_email_code
+    if not verify_email_code(db, current_user, payload.code):
+        raise HTTPException(status_code=400, detail="Ugyldig eller utløpt kode")
+    current_user.mfa_method = "email"
+    db.commit()
+    return {"enabled": True, "mfa_method": "email"}
+
+
+@router.post("/2fa/email/resend", status_code=status.HTTP_202_ACCEPTED)
+async def email_mfa_resend_during_login(
+    payload: EmailMfaResendRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+):
+    """Send ny e-post-kode i forbindelse med pågående innlogging.
+
+    Krever korrekt passord for å hindre at angripere spammer e-post mot
+    vilkårlige kontoer. Alltid 202 (samme respons om bruker finnes eller
+    ikke) for å unngå konto-enumerering.
+    """
+    check_login_rate_limit(http_request)
+
+    login_value = payload.email.strip()
+    user_email_normalized = (
+        login_value.lower() if "@" in login_value else f"{login_value.lower()}@bakeri.local"
+    )
+    user = db.query(User).filter(User.email == user_email_normalized).first()
+    if (
+        user
+        and user.password_hash
+        and user.password_hash != "__susoft__"
+        and verify_password(payload.password, user.password_hash)
+        and (user.mfa_method or "none") == "email"
+    ):
+        from ..email_mfa import issue_and_send_code
+        client_ip = http_request.client.host if http_request.client else None
+        issue_and_send_code(db, user, ip_address=client_ip)
+    return {"status": "sent"}
+

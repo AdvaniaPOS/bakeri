@@ -103,6 +103,21 @@ server {
     root /home/poshubadmin/bakeri/frontend/dist;
     index index.html;
 
+    # ── Sikkerhets-headers (defense in depth — backend setter også disse) ──
+    # HSTS: Cloudflare termine SSL, så HTTPS er garantert utad. 1 år.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # Hindre clickjacking
+    add_header X-Frame-Options "DENY" always;
+    # Hindre MIME-sniffing
+    add_header X-Content-Type-Options "nosniff" always;
+    # Reduser referrer-lekkasje
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # Lås ned browser-APIer vi ikke bruker
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+    # CSP for SPA — tillater egen origin + Sentry hvis aktivert.
+    # Juster 'connect-src' hvis frontend snakker med andre tredjeparter.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://*.ingest.sentry.io https://*.ingest.de.sentry.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+
     # SPA-routing
     location / {
         try_files $uri /index.html;
@@ -120,11 +135,18 @@ server {
     }
 
     # /docs (FastAPI Swagger) – valgfritt, kan begrenses
+    # NB: i prod bør /docs og /openapi.json beskyttes (basic auth) eller
+    # deaktiveres ved å ikke proxe dem. Lekker API-flate ellers.
     location /docs {
+        # Eksempel: krev basic auth (lag .htpasswd via `sudo htpasswd -c /etc/nginx/.htpasswd-bakeri admin`)
+        # auth_basic "Bakeri docs";
+        # auth_basic_user_file /etc/nginx/.htpasswd-bakeri;
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
     }
     location /openapi.json {
+        # auth_basic "Bakeri docs";
+        # auth_basic_user_file /etc/nginx/.htpasswd-bakeri;
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
     }
@@ -132,6 +154,14 @@ server {
     client_max_body_size 25m;
 }
 ```
+
+> **Påkrevde env-variabler i `/etc/systemd/system/bakeri-backend.service` (eller `.env`) for prod:**
+> - `APP_ENV=production` — slår på prod-validering
+> - `JWT_SECRET_KEY=<≥32 tegn>` — backend krasjer ellers
+> - `APP_ENCRYPTION_KEY=<base64 32 byte>` — krypterer 2FA-secrets
+> - `CORS_ALLOW_ORIGINS=https://bakeri.poshub.no` — backend krasjer ellers i prod
+> - `TRUSTED_HOSTS=bakeri.poshub.no` — backend krasjer ellers i prod
+> - (valgfritt) `SECURITY_CSP="default-src 'none'; ..."` for å overstyre default
 
 Aktiver:
 ```bash

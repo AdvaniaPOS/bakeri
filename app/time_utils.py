@@ -12,6 +12,12 @@ For lagring i DB:
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 
+from .utils.timezone import (
+    DEFAULT_ORDER_EDIT_CUTOFF_TIME,
+    cutoff_datetime_for_editing,
+    is_order_locked_for_editing_at,
+)
+
 OSLO_TZ = ZoneInfo("Europe/Oslo")
 UTC_TZ = ZoneInfo("UTC")
 
@@ -46,8 +52,8 @@ def to_naive_utc(dt: datetime) -> datetime:
 
 
 # Cut-off-konfigurasjon (Oslo-tid)
-CUTOFF_HOUR = 15
-CUTOFF_MINUTE = 0
+CUTOFF_HOUR = DEFAULT_ORDER_EDIT_CUTOFF_TIME.hour
+CUTOFF_MINUTE = DEFAULT_ORDER_EDIT_CUTOFF_TIME.minute
 
 
 def cutoff_datetime_for(delivery_date: date) -> datetime:
@@ -55,10 +61,12 @@ def cutoff_datetime_for(delivery_date: date) -> datetime:
     Beregn cut-off-tidspunkt for en gitt leveringsdato.
     Returnerer tidssone-bevisst datetime i Oslo-tid.
 
-    Cut-off er kl. 15:00 dagen FØR levering.
+    Cut-off er kl. 10:00 dagen FØR levering.
     """
-    cutoff_date = delivery_date - timedelta(days=1)
-    return datetime.combine(cutoff_date, time(CUTOFF_HOUR, CUTOFF_MINUTE), tzinfo=OSLO_TZ)
+    return cutoff_datetime_for_editing(
+        delivery_date,
+        cutoff_time=time(CUTOFF_HOUR, CUTOFF_MINUTE),
+    )
 
 
 def is_past_cutoff(delivery_date: date, now: datetime | None = None) -> bool:
@@ -69,8 +77,12 @@ def is_past_cutoff(delivery_date: date, now: datetime | None = None) -> bool:
     """
     current = now or now_oslo()
     if current.tzinfo is None:
-        current = current.replace(tzinfo=OSLO_TZ)
-    return current >= cutoff_datetime_for(delivery_date)
+        current = current.replace(tzinfo=UTC_TZ)
+    return is_order_locked_for_editing_at(
+        delivery_date,
+        current_time=current,
+        cutoff_time=time(CUTOFF_HOUR, CUTOFF_MINUTE),
+    )
 
 
 # =============================================================================
@@ -87,11 +99,11 @@ DEFAULT_NON_DELIVERY_WEEKDAYS = [5, 6, 0]  # lør, søn, man
 #   h, m = klokkeslett (Oslo-tid)
 # Mangler en weekday i lista = ingen levering den dagen.
 DEFAULT_DELIVERY_CUTOFFS = [
-    {"dw": 0, "cw": 3, "h": 15, "m": 0},  # Mandag ← Torsdag 15:00
-    {"dw": 1, "cw": 4, "h": 15, "m": 0},  # Tirsdag ← Fredag 15:00
-    {"dw": 2, "cw": 1, "h": 15, "m": 0},  # Onsdag ← Tirsdag 15:00
-    {"dw": 3, "cw": 2, "h": 15, "m": 0},  # Torsdag ← Onsdag 15:00
-    {"dw": 4, "cw": 3, "h": 15, "m": 0},  # Fredag ← Torsdag 15:00
+    {"dw": 0, "cw": 3, "h": 10, "m": 0},  # Mandag ← Torsdag 10:00
+    {"dw": 1, "cw": 4, "h": 10, "m": 0},  # Tirsdag ← Fredag 10:00
+    {"dw": 2, "cw": 1, "h": 10, "m": 0},  # Onsdag ← Tirsdag 10:00
+    {"dw": 3, "cw": 2, "h": 10, "m": 0},  # Torsdag ← Onsdag 10:00
+    {"dw": 4, "cw": 3, "h": 10, "m": 0},  # Fredag ← Torsdag 10:00
 ]
 
 
@@ -108,7 +120,7 @@ def _delivery_schedule(tenant_settings: dict | None) -> dict[int, dict]:
         try:
             dw = int(r.get("dw", -1))
             cw = int(r.get("cw", -1))
-            h = int(r.get("h", 15))
+            h = int(r.get("h", CUTOFF_HOUR))
             m = int(r.get("m", 0))
         except (TypeError, ValueError):
             continue

@@ -1,240 +1,153 @@
 # Lampeland Bakeri - Ordresystem
 
-B2B Order Management System for Lampeland Bakeri, integrated with SuSoft POS API.
+Lampeland Bakeri Ordresystem er et B2B bestillingssystem for faste leveringer til bedriftskunder, med FastAPI-backend, React/Vite-frontend, Celery-jobber og integrasjon mot Susoft.
 
-## Architecture Overview
+README-en er prosjektets korte oversikt. For detaljert funksjonsbeskrivelse og arkitektur, se dokumentene under.
 
-```
+## Status per juni 2026
+
+| Område | Status | Kort forklaring |
+|---|---|---|
+| Ruteplanlegging og levering | Klar for test | Rute-modell, API, kundetildeling og adminside finnes. |
+| Produksjonsrapporter | Klar for test | Dagsrapport, ukeoversikt, batch-plan og PDF-endepunkter finnes. |
+| Ordreflyt og cutoff | Klar for test | Cutoff-logikk og ordrelåsing er implementert i backend. |
+| Susoft-synkronisering | Satt i gang | Sync og adminstøtte finnes, men observabilitet bør styrkes. |
+| Sikkerhet og MFA | Klar for test | Roller, tenant-scope, refresh tokens og MFA-støtte finnes. |
+| Drift og helse | Satt i gang | Celery-jobber, statusendepunkter og innstillinger finnes. |
+
+## Hva systemet gjør i dag
+
+- Vedlikeholder kunder, produkter, priser og ukentlige bestillingsmaler.
+- Genererer fremtidige ordrer automatisk basert på maler og leveringsregler.
+- Låser ordre ved cutoff og hindrer endringer etter frist.
+- Synkroniserer kunde-, produkt- og ordredata mot Susoft.
+- Bygger produksjonsrapporter, batch-planer, pakklister og kjørelister.
+- Støtter ruteplanlegging, leveringsflyt, driver-visning og statusoppfølging.
+- Bruker tenant-basert sikkerhet med roller og MFA-støtte.
+
+## Prosjektstruktur
+
+```text
 app/
-├── __init__.py
-├── main.py              # FastAPI application entry point
-├── database.py          # SQLAlchemy configuration
-├── models.py            # Database models (SQLAlchemy)
-├── schemas.py           # Pydantic schemas for API validation
-├── tasks.py             # Celery scheduled tasks
+├── main.py
+├── models.py
+├── schemas.py
+├── tasks.py
+├── auth.py / auth_models.py
+├── cutoff.py / time_utils.py
 ├── api/
-│   ├── __init__.py
-│   ├── customers.py     # Customer CRUD endpoints
-│   ├── products.py      # Product CRUD endpoints
-│   ├── pricing.py       # Customer-specific pricing with date logic
-│   ├── templates.py     # Master template (Order Matrix) endpoints
-│   ├── orders.py        # Order management endpoints
-│   └── admin.py         # Admin functions (panic button, holidays, alerts)
+│   ├── admin.py
+│   ├── auth.py
+│   ├── customers.py
+│   ├── driver.py
+│   ├── notifications.py
+│   ├── orders.py
+│   ├── overrides.py
+│   ├── portal.py
+│   ├── pricing.py
+│   ├── production.py
+│   ├── products.py
+│   ├── reports.py
+│   ├── routes.py
+│   ├── susoft_sync.py
+│   └── templates.py
 └── services/
-    ├── __init__.py
-    └── susoft.py        # SuSoft POS API integration
+  └── susoft.py
+
+frontend/src/
+├── App.jsx
+├── components/
+├── contexts/
+└── pages/
+  ├── Dashboard.jsx
+  ├── Customers.jsx
+  ├── Orders.jsx
+  ├── Templates.jsx
+  ├── RoutesPage.jsx
+  ├── ProductionReport.jsx
+  ├── DeliveryList.jsx
+  ├── Driver.jsx
+  ├── Status.jsx
+  ├── Settings.jsx
+  └── portal/
 ```
 
-## Database Schema
+## Viktige dokumenter
 
-### Core Entities
+- [SYSTEMBESKRIVELSE.md](SYSTEMBESKRIVELSE.md): forretningsbeskrivelse, status, arbeidsflyt og videre planer.
+- [ARCHITECTURE.md](ARCHITECTURE.md): målarkitektur og teknisk spesifikasjon, synkronisert med dagens implementasjonsstatus.
+- [docs/UAT-CHECKLIST.md](docs/UAT-CHECKLIST.md): forslag til akseptanse- og verifikasjonspunkter.
+- [docs/TRELLO_JIRA_OPPSETT.md](docs/TRELLO_JIRA_OPPSETT.md): oppsett for styringstavle og backlog.
+- [docs/LEDEROVERSIKT_UTVIKLING.md](docs/LEDEROVERSIKT_UTVIKLING.md): kort ledervennlig utviklingsstatus.
+- [docs/TEKNISK_ENDRINGSLOGG.md](docs/TEKNISK_ENDRINGSLOGG.md): forskjellen mellom opprinnelig målarkitektur og dagens implementasjon.
 
-| Model | Purpose |
-|-------|---------|
-| `Customer` | Mirrored from SuSoft, includes delivery windows and order lead time |
-| `Product` | Mirrored from SuSoft, includes default pricing |
-| `CustomerProductPrice` | Customer-specific pricing with `effective_from_date` |
-| `MasterTemplate` | 7-day recurring order template per customer |
-| `MasterTemplateItem` | Product/day/quantity entries in template |
-| `Order` | Actual orders with SuSoft sync tracking |
-| `OrderLine` | Order line items with captured prices |
-| `OrderDateOverride` | Ad-hoc quantity overrides for specific dates |
+## Viktige flyter
 
-### Supporting Entities
+### Ordregenerering
 
-| Model | Purpose |
-|-------|---------|
-| `Holiday` | Norwegian public holidays (quantity = 0) |
-| `CustomerBlockedDate` | Customer-specific blocked date ranges |
-| `DeliveryRoute` | Google Maps optimized routes |
-| `DeliveryIssue` | Driver-reported discrepancies |
-| `AuditLog` | Full audit trail with required deletion reasons |
-| `SyncLog` | SuSoft API sync attempt logs |
-| `AdminAlert` | System alerts with email notifications |
-| `User` | System users (admin, coordinator, driver) |
+- Kundene har ukentlige maler med produkter, ukedager og antall.
+- En planlagt jobb genererer ordrer frem i tid basert på malene.
+- Helligdager, blokkerte datoer og leveringsregler påvirker hvilke ordrer som faktisk opprettes.
 
-## Key Features
+### Cutoff og levering
 
-### 1. Price-Date Logic
+- Ordreendringer stoppes når cutoff er passert.
+- Ordre går gjennom en statusflyt fra utkast til levering.
+- Samme ordredatasett brukes til produksjon, pakking og distribusjon.
 
-The `CustomerProductPrice` table enables scheduled price changes:
+### Produksjon og rapportering
 
-```python
-# Query: Get effective price for customer/product on a date
-price_entry = db.execute(
-    select(CustomerProductPrice)
-    .where(
-        CustomerProductPrice.customer_id == customer_id,
-        CustomerProductPrice.product_id == product_id,
-        CustomerProductPrice.effective_from_date <= target_date
-    )
-    .order_by(CustomerProductPrice.effective_from_date.desc())
-    .limit(1)
-).scalar_one_or_none()
-```
+- Dagsrapport viser hva som skal produseres for valgt dato.
+- Ukeoversikt og batch-plan gir bedre planlegging i bakeriet.
+- PDF-endepunkter brukes for utskrift av produksjons- og leveringsgrunnlag.
 
-When a price changes:
-1. All future orders in DB are updated
-2. Orders already sent to SuSoft are marked for re-sync
-3. Audit trail is created
+## Viktige API-områder
 
-### 2. Order Matrix (Master Template)
+- `customers`, `products`, `pricing`, `templates` og `orders` for kjerneflyten.
+- `routes` og `reports` for levering, produksjon og distribusjon.
+- `admin`, `susoft_sync`, `notifications` og `driver` for drift og operasjonell støtte.
+- `auth` og `portal` for sikkerhet og kundetilgang.
 
-Each customer has an active template with a 7-day grid:
+## Planlagte og aktive forbedringer
 
-```json
-{
-  "product_id": 1,
-  "day_of_week": 1,  // Monday
-  "quantity": 10
-}
-```
+1. Verifisere ende-til-ende flyt for ruter, produksjon, cutoff og pakksedler.
+2. Gjøre Susoft-sync, retry og driftsfeil mer synlig for admin og ledelse.
+3. Ferdigstille prislogikk med gyldig fra dato og bedre audit-spor.
+4. Bruke ledertavle og statusrapport fast i utviklingsoppfølgingen.
 
-Orders are generated 14-30 days in advance (configurable per customer).
+## Oppsett lokalt
 
-### 3. SuSoft Synchronization
+### Forutsetninger
 
-- Orders marked with `sync_status` (pending, synced, failed)
-- `susoft_order_id` for tracking in SuSoft
-- Retry logic: every 60 mins, or next morning
-- Admin alerts on persistent failures
-
-### 4. Cut-off Time
-
-All changes locked at 15:00 the day before delivery:
-
-```python
-cutoff_datetime = datetime.combine(
-    delivery_date - timedelta(days=1),
-    time(hour=15, minute=0)
-)
-```
-
-### 5. Panic Button
-
-Batch cancel all orders for a specific date:
-
-```http
-POST /api/v1/admin/panic-cancel
-{
-  "target_date": "2024-12-24",
-  "reason": "Power outage at bakery"
-}
-```
-
-## API Endpoints
-
-### Customers
-- `GET /api/v1/customers` - List customers
-- `POST /api/v1/customers` - Create customer
-- `GET /api/v1/customers/{id}` - Get customer
-- `PATCH /api/v1/customers/{id}` - Update customer
-- `DELETE /api/v1/customers/{id}` - Soft delete (requires reason)
-
-### Products
-- `GET /api/v1/products` - List products
-- `POST /api/v1/products` - Create product
-- `GET /api/v1/products/{id}` - Get product
-- `PATCH /api/v1/products/{id}` - Update product
-- `DELETE /api/v1/products/{id}` - Soft delete (requires reason)
-
-### Pricing
-- `POST /api/v1/pricing/lookup` - Get effective price for customer/product/date
-- `GET /api/v1/pricing` - List customer prices
-- `POST /api/v1/pricing` - Create price entry
-- `PATCH /api/v1/pricing/{id}` - Update price (triggers order updates)
-- `POST /api/v1/pricing/propagate` - Force price propagation to orders
-
-### Templates
-- `GET /api/v1/templates` - List templates
-- `GET /api/v1/templates/{id}/matrix` - Get matrix view for UI
-- `PUT /api/v1/templates/{id}/matrix` - Bulk update from matrix
-- `POST /api/v1/templates/{id}/duplicate` - Copy template
-
-### Orders
-- `GET /api/v1/orders` - List orders with filters
-- `GET /api/v1/orders/by-date/{date}` - Orders for driver view
-- `POST /api/v1/orders` - Create manual order
-- `PATCH /api/v1/orders/{id}/lines/{line_id}` - Ad-hoc quantity change
-- `POST /api/v1/orders/{id}/confirm` - Confirm and schedule sync
-- `POST /api/v1/orders/generate-from-template` - Generate from template
-
-### Admin
-- `POST /api/v1/admin/panic-cancel` - Emergency batch cancel
-- `GET /api/v1/admin/holidays` - List holidays
-- `POST /api/v1/admin/holidays/populate-norwegian/{year}` - Add Norwegian holidays
-- `GET /api/v1/admin/blocked-dates` - Customer blocked dates
-- `GET /api/v1/admin/alerts` - System alerts
-- `GET /api/v1/admin/audit-logs` - Audit trail
-
-## Celery Scheduled Tasks
-
-| Task | Schedule | Purpose |
-|------|----------|---------|
-| `generate_orders_for_all_customers` | 02:00 daily | Generate orders from templates |
-| `sync_pending_orders` | Every hour | Sync to SuSoft |
-| `apply_cutoff_locks` | 15:00 daily | Lock next-day orders |
-| `retry_failed_syncs` | 06:00 daily | Morning retry for failed syncs |
-| `sync_from_susoft` | 01:00 daily | Pull customer/product data |
-| `process_scheduled_price_changes` | 00:05 daily | Apply price changes |
-
-## Setup
-
-### Prerequisites
 - Python 3.11+
-- PostgreSQL 14+
-- Redis (for Celery)
+- PostgreSQL eller SQLite for utvikling
+- Redis for Celery
+- Node.js for frontend
 
-### Installation
+### Installer backend
 
-```bash
-# Create virtual environment
+```powershell
 python -m venv venv
-venv\Scripts\activate  # Windows
-source venv/bin/activate  # Linux/Mac
-
-# Install dependencies
+venv\Scripts\activate
 pip install -r requirements.txt
-
-# Set environment variables
-cp .env.example .env
-# Edit .env with your settings
+Copy-Item .env.example .env
 ```
 
-### Environment Variables
+### Start backend og jobber
 
-```env
-DATABASE_URL=postgresql://user:pass@localhost:5432/lampeland_bakeri
-REDIS_URL=redis://localhost:6379/0
-SUSOFT_BASE_URL=https://api.susoft.no
-SUSOFT_API_KEY=your_api_key
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=alerts@lampeland-bakeri.no
-SMTP_PASS=your_smtp_password
-```
-
-### Run
-
-```bash
-# Start API server
+```powershell
 uvicorn app.main:app --reload
-
-# Start Celery worker
 celery -A app.tasks worker --loglevel=info
-
-# Start Celery beat (scheduler)
 celery -A app.tasks beat --loglevel=info
 ```
 
-## Next Steps
+### Start frontend
 
-1. **SuSoft Integration**: Update `services/susoft.py` with actual SuSoft API endpoints from their Swagger spec
-2. **Google Maps Integration**: Add route optimization service
-3. **Driver Portal**: Create mobile-friendly delivery view
-4. **PDF Generation**: Implement driving plans and Zebra labels
-5. **Authentication**: Add proper user authentication (OAuth, Azure AD)
-6. **Frontend**: Build admin UI (React/Vue recommended)
+```powershell
+cd frontend
+npm install
+npm run dev
+```
 
 ## License
 

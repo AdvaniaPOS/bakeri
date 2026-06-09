@@ -1044,7 +1044,7 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800 flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                   <div>
-                    Ordren er låst etter cut-off (kl. 15:00 dagen før levering). Endringer er ikke tillatt.
+                    Ordren er låst etter cut-off (kl. 10:00 dagen før levering). Endringer er ikke tillatt.
                   </div>
                 </div>
               )}

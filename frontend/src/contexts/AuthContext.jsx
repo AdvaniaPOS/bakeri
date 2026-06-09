@@ -149,7 +149,12 @@ export function AuthProvider({ children }) {
   }, []);
 
   // Login function
-  const login = useCallback(async (email, password, totp_code) => {
+  //
+  // Returnerer:
+  //   { success: true, mustSetupMfa?: boolean }
+  //   { success: false, twoFactorRequired: true, mfaMethod: 'email' | 'totp', message: string }
+  //   { success: false, error: string }
+  const login = useCallback(async (email, password, mfaCode) => {
     setError(null);
     setLoading(true);
 
@@ -159,14 +164,30 @@ export function AuthProvider({ children }) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, password, totp_code: totp_code || null }),
+        body: JSON.stringify({
+          email,
+          password,
+          // Sender feltet både som mfa_code (nytt) og totp_code (bakoverkompat)
+          mfa_code: mfaCode || null,
+          totp_code: mfaCode || null,
+        }),
       });
 
       const data = await parseResponseSafely(response);
 
       if (!response.ok) {
         if (response.headers.get('X-2FA-Required') === 'true') {
-          return { success: false, twoFactorRequired: true };
+          const method = (response.headers.get('X-2FA-Method') || 'totp').toLowerCase();
+          return {
+            success: false,
+            twoFactorRequired: true,
+            mfaMethod: method,
+            message: data?.detail || (
+              method === 'email'
+                ? 'Vi har sendt en kode på e-post'
+                : 'Skriv inn 2FA-koden fra autentiseringsappen'
+            ),
+          };
         }
         throw new Error(data?.detail || 'Login failed');
       }
@@ -187,12 +208,26 @@ export function AuthProvider({ children }) {
       // Trigger periodeplan-sjekk for ny økt (token må settes før kall).
       triggerHorizonCheck(data.access_token);
 
-      return { success: true };
+      return { success: true, mustSetupMfa: !!data.must_setup_mfa };
     } catch (err) {
       setError(err.message);
       return { success: false, error: err.message };
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // Be om ny e-post-kode under pågående innlogging
+  const requestEmailMfaCode = useCallback(async (email, password) => {
+    try {
+      const r = await fetch(`${API_BASE}/auth/2fa/email/resend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      return r.ok || r.status === 202;
+    } catch {
+      return false;
     }
   }, []);
 
@@ -464,6 +499,7 @@ export function AuthProvider({ children }) {
     isImpersonating,
     beginImpersonation,
     endImpersonation,
+    requestEmailMfaCode,
   };
 
   return (

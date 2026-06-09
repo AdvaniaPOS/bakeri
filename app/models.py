@@ -717,7 +717,7 @@ class Order(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     SYNC:
     - susoft_order_id tracks the order in SuSoft for updates/deletes
     - sync_status tracks synchronization state
-    - Cut-off: Changes locked at 15:00 day before delivery
+    - Cut-off: Changes locked at 10:00 day before delivery
     """
     __tablename__ = "orders"
 
@@ -874,7 +874,7 @@ class Order(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     # Cut-off tracking
     is_locked: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False,
-        comment="Locked after cut-off time (15:00 day before delivery)"
+        comment="Locked after cut-off time (10:00 day before delivery)"
     )
     locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     
@@ -1482,8 +1482,8 @@ class DailyProductionSummary(Base, TimestampMixin, TenantMixin):
     Aggregert produksjonsrapport per dag.
     
     TENANT-SCOPED: Production summaries are per tenant.
-    
-    Genereres automatisk når ordrer låses (kl 15:00 dagen før).
+
+    Genereres automatisk når ordrer låses (kl 10:00 dagen før).
     Brukes av bakerne for å vite hvor mye som skal produseres.
     """
     __tablename__ = "daily_production_summaries"

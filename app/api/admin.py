@@ -8,6 +8,7 @@ Handles:
 - Alerts
 - Audit logs
 """
+from copy import deepcopy
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
@@ -22,7 +23,13 @@ from ..auth import get_password_hash
 from ..dependencies import get_current_user, get_current_tenant, require_role
 from ..crypto_utils import encrypt_secret
 from ..email_utils import send_tenant_welcome
-from ..time_utils import now_utc, to_naive_utc
+from ..time_utils import (
+    CUTOFF_HOUR,
+    CUTOFF_MINUTE,
+    DEFAULT_DELIVERY_CUTOFFS,
+    now_utc,
+    to_naive_utc,
+)
 from ..models import (
     Order, Holiday, CustomerBlockedDate, AdminAlert, AuditLog,
     OrderStatus, SyncStatus, AuditAction
@@ -869,11 +876,11 @@ _ALLOWED_SETTINGS = {
     "onboarding_completed": {"type": "bool", "default": False, "description": "Onboarding-wizard er fullført"},
     # Bestillingsfrister
     "cutoff_hour": {
-        "type": "int_range", "min": 0, "max": 23, "default": 15,
+        "type": "int_range", "min": 0, "max": 23, "default": CUTOFF_HOUR,
         "description": "Time på dagen (0-23, Oslo-tid) der bestillingsfristen for neste dag stenger.",
     },
     "cutoff_minute": {
-        "type": "int_range", "min": 0, "max": 59, "default": 0,
+        "type": "int_range", "min": 0, "max": 59, "default": CUTOFF_MINUTE,
         "description": "Minutt for cutoff (0-59).",
     },
     # Liste med Python weekday-int (0=man, 6=søn) som IKKE er gyldige leveringsdager.
@@ -885,13 +892,7 @@ _ALLOWED_SETTINGS = {
     # Mangler en dw = ikke leveringsdag.
     "delivery_cutoffs": {
         "type": "delivery_cutoffs",
-        "default": [
-            {"dw": 0, "cw": 3, "h": 15, "m": 0},
-            {"dw": 1, "cw": 4, "h": 15, "m": 0},
-            {"dw": 2, "cw": 1, "h": 15, "m": 0},
-            {"dw": 3, "cw": 2, "h": 15, "m": 0},
-            {"dw": 4, "cw": 3, "h": 15, "m": 0},
-        ],
+        "default": deepcopy(DEFAULT_DELIVERY_CUTOFFS),
         "description": "Per-ukedag bestillingsfrist. Hver oppføring: {dw=leveringsdag 0-6, cw=cutoff-dag 0-6, h=time, m=minutt}.",
     },
 }
@@ -936,7 +937,7 @@ def _validate_setting(key: str, value):
                 raise HTTPException(status_code=400, detail=f"{key}: hver oppføring må være objekt")
             try:
                 dw = int(r.get("dw")); cw = int(r.get("cw"))
-                h = int(r.get("h", 15)); m = int(r.get("m", 0))
+                h = int(r.get("h", CUTOFF_HOUR)); m = int(r.get("m", CUTOFF_MINUTE))
             except (TypeError, ValueError):
                 raise HTTPException(status_code=400, detail=f"{key}: ugyldige felt i oppføring")
             if not (0 <= dw <= 6 and 0 <= cw <= 6 and 0 <= h <= 23 and 0 <= m <= 59):

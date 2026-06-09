@@ -287,6 +287,15 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
         comment="Base32 TOTP-secret, kryptert via app/crypto_utils.py."
     )
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Foretrukket 2FA-metode. "none" = ingen 2FA aktiv. "email" = engangskode
+    # sendt på e-post. "totp" = autentiserings-app (krever totp_enabled=True).
+    # Admin-roller (SUPER_ADMIN, TENANT_ADMIN) tvinges til å sette dette til
+    # "email" eller "totp" ved første innlogging.
+    mfa_method: Mapped[str] = mapped_column(
+        String(16), default="none", nullable=False, server_default="none",
+        comment="2FA-metode: 'none' | 'email' | 'totp'"
+    )
     
     # Preferences (JSON)
     preferences: Mapped[Optional[dict]] = mapped_column(
@@ -379,6 +388,38 @@ class RefreshToken(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_refresh_tokens_user", "user_id", "is_revoked"),
     )
+
+
+# =============================================================================
+# 2FA — EMAIL CODES
+# =============================================================================
+
+class EmailMfaCode(Base, TimestampMixin):
+    """Engangs e-post-kode for 2FA-innlogging.
+
+    Lagrer ALDRI selve koden i klartekst — kun SHA256-hash. Koden er gyldig
+    en kort periode (10 min) og maks 5 forsøk. Inaktive/utløpte rader ryddes
+    via cron eller når ny kode utstedes for samme bruker.
+    """
+    __tablename__ = "email_mfa_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    code_hash: Mapped[str] = mapped_column(
+        String(128), nullable=False,
+        comment="SHA256-hash av 6-sifret kode."
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    __table_args__ = (
+        Index("ix_email_mfa_codes_user_active", "user_id", "used_at"),
+    )
+
     
     @property
     def is_valid(self) -> bool:

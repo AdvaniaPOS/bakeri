@@ -3,24 +3,65 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import { ShoppingCart, X } from 'lucide-react';
 
 const API_BASE = '/api/v1';
+const OSLO_TIME_ZONE = 'Europe/Oslo';
+const PORTAL_CUTOFF_HOUR = 10;
+const PORTAL_CUTOFF_MINUTE = 0;
+
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+
+function getOsloNowParts() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: OSLO_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date());
+
+  const mapped = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value]),
+  );
+
+  return {
+    date: `${mapped.year}-${mapped.month}-${mapped.day}`,
+    time: `${mapped.hour}:${mapped.minute}`,
+  };
+}
+
+
+function todayIso() {
+  return getOsloNowParts().date;
+}
+
+
+function shiftIsoDate(dateStr, days) {
+  const [year, month, day] = dateStr.split('-').map((value) => parseInt(value, 10));
+  const shiftedDate = new Date(Date.UTC(year, month - 1, day));
+  shiftedDate.setUTCDate(shiftedDate.getUTCDate() + days);
+  return `${shiftedDate.getUTCFullYear()}-${pad2(shiftedDate.getUTCMonth() + 1)}-${pad2(shiftedDate.getUTCDate())}`;
+}
 
 function tomorrowIso() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
+  return shiftIsoDate(todayIso(), 1);
 }
 
 function isPastCutoff(dateStr) {
-  // Cutoff: 15:00 dagen før leveringsdato.
-  // Hvis det er før 15:00 i dag og leveringsdato == i morgen → OK.
-  // Enkel klient-sjekk; backend validerer for sikkerhet.
+  // Cutoff: 10:00 dagen før leveringsdato, vurdert i Europe/Oslo.
+  // Enkel klient-sjekk; backend validerer fortsatt autoritativt.
   if (!dateStr) return false;
-  const today = new Date();
-  const delivery = new Date(dateStr + 'T00:00:00');
-  const cutoff = new Date(delivery);
-  cutoff.setDate(cutoff.getDate() - 1);
-  cutoff.setHours(15, 0, 0, 0);
-  return today >= cutoff;
+
+  const nowOslo = getOsloNowParts();
+  const cutoffKey = `${shiftIsoDate(dateStr, -1)}T${pad2(PORTAL_CUTOFF_HOUR)}:${pad2(PORTAL_CUTOFF_MINUTE)}`;
+  const nowKey = `${nowOslo.date}T${nowOslo.time}`;
+  return nowKey >= cutoffKey;
 }
 
 export default function PortalNewOrder() {
@@ -161,7 +202,7 @@ export default function PortalNewOrder() {
       .filter(([, q]) => q > 0)
       .map(([pid, q]) => ({ product_id: Number(pid), quantity: Number(q) }));
     if (lines.length === 0) return setError('Legg inn antall på minst ett produkt');
-    if (cutoffPassed) return setError('Bestillingsfristen for denne datoen har passert (kl 15:00 dagen før).');
+    if (cutoffPassed) return setError('Bestillingsfristen for denne datoen har passert (kl 10:00 dagen før).');
     if (tooEarly) return setError(`Tidligst mulig leveringsdato er ${earliestDate}.`);
 
     setSubmitting(true);
@@ -321,7 +362,7 @@ export default function PortalNewOrder() {
               <input
                 type="date"
                 value={deliveryDate}
-                min={earliestDate || new Date().toISOString().slice(0, 10)}
+                min={earliestDate || todayIso()}
                 onChange={(e) => setDeliveryDate(e.target.value)}
                 className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
               />
