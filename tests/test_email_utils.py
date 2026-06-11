@@ -182,3 +182,26 @@ def test_send_email_falls_back_to_smtp_when_resend_raises(monkeypatch):
     smtp = state["smtp"]
     assert smtp.sent is not None
     assert smtp.sent["to"] == ["kunde@example.test"]
+
+
+def test_send_password_reset_uses_cors_origin_when_public_base_url_missing(monkeypatch):
+    captured = {}
+
+    def _fake_send_email(**kwargs):
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://bakeri.poshub.no, http://localhost:5173")
+    monkeypatch.setattr(email_utils, "send_email", _fake_send_email)
+
+    ok = email_utils.send_password_reset(
+        to_email="kunde@example.test",
+        reset_token="abc123",
+        tenant_name="Lampeland Bakeri",
+    )
+
+    assert ok is True
+    assert captured["to"] == "kunde@example.test"
+    assert "https://bakeri.poshub.no/nullstill-passord?token=abc123" in captured["html"]
+    assert "https://bakeri.poshub.no/nullstill-passord?token=abc123" in captured["text"]

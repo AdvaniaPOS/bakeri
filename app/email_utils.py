@@ -8,10 +8,11 @@ Hvis RESEND_API_KEY mangler, logges e-posten kun til konsoll
 (praktisk i utvikling og test).
 
 Miljovariabler:
-  RESEND_API_KEY      - krevd for ekte sending (re_...)
-  RESEND_FROM_EMAIL   - default: onboarding@resend.dev (kun dev)
-  RESEND_FROM_NAME    - default: "Bakeri"
-  PUBLIC_BASE_URL     - brukt i lenker i e-post
+    RESEND_API_KEY      - krevd for ekte sending (re_...)
+    RESEND_FROM_EMAIL   - default: onboarding@resend.dev (kun dev)
+    RESEND_FROM_NAME    - default: "Bakeri"
+    PUBLIC_BASE_URL     - brukt i lenker i e-post
+                                                fallback: første origin i CORS_ALLOW_ORIGINS
 
 Dev-fallgruver:
   - Uten verifisert domene MA from vaere onboarding@resend.dev,
@@ -78,7 +79,17 @@ def _smtp_from_email() -> str:
 
 
 def _public_base_url() -> str:
-    return (os.getenv("PUBLIC_BASE_URL") or "http://localhost:5173").rstrip("/")
+    configured = (os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if configured:
+        return configured
+
+    cors_origins = (os.getenv("CORS_ALLOW_ORIGINS") or "").split(",")
+    for origin in cors_origins:
+        candidate = origin.strip().rstrip("/")
+        if candidate.startswith(("http://", "https://")):
+            return candidate
+
+    return "http://localhost:5173"
 
 
 def _send_email_via_smtp(

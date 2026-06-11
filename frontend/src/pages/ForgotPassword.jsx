@@ -11,7 +11,7 @@ export default function ForgotPassword() {
   const [done, setDone] = useState(false);
   const [error, setError] = useState(null);
   const [doneMessage, setDoneMessage] = useState('');
-  const helpText = 'For lokale kontoer sender vi en lenke på e-post. Hvis du logger inn med brukernavn eller via SuSoft, må passordet endres der eller av administrator.';
+  const helpText = 'Denne funksjonen virker bare for lokale kontoer med eget passord i ordresystemet. Hvis du logger inn via SuSoft eller med en ansattkonto, må passordet endres i SuSoft eller av administrator.';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -42,7 +42,7 @@ export default function ForgotPassword() {
         <div className="text-center mb-6">
           <h1 className="text-xl font-semibold text-gray-900">Glemt passord</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Skriv inn e-postadressen eller brukernavnet ditt for å be om hjelp med innlogging.
+            Lokale kontoer kan få nullstillings-lenke på e-post. SuSoft-brukere må bruke SuSoft-passord eller kontakte administrator.
           </p>
         </div>
         <div className="card">
@@ -79,7 +79,7 @@ export default function ForgotPassword() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="input w-full"
-                  placeholder="din@epost.no eller brukernavn"
+                  placeholder="din@epost.no eller lokalbruker"
                   autoFocus
                 />
               </div>
@@ -88,7 +88,7 @@ export default function ForgotPassword() {
                 disabled={submitting || !email}
                 className="btn-primary w-full justify-center disabled:opacity-50"
               >
-                {submitting ? 'Sender...' : 'Send nullstillings-lenke'}
+                {submitting ? 'Sender...' : 'Send nullstillings-lenke for lokal konto'}
               </button>
               <div className="text-center">
                 <Link to="/login" className="text-sm text-amber-600 hover:text-amber-700">
