@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import sys
 
+from sqlalchemy import inspect
 from sqlalchemy import text
 
 from app.database import engine
@@ -42,6 +43,19 @@ INDEXES = [
 ]
 
 
+def _where_clause_for_dialect(where: str | None, dialect: str) -> str | None:
+    if not where:
+        return None
+    if dialect == "postgresql":
+        return where.replace(" = 0", " = false").replace(" = 1", " = true")
+    return where
+
+
+def _index_exists(conn, table: str, index_name: str) -> bool:
+    inspector = inspect(conn)
+    return any(index["name"] == index_name for index in inspector.get_indexes(table))
+
+
 def main() -> int:
     dialect = engine.dialect.name
     created: list[str] = []
@@ -49,10 +63,14 @@ def main() -> int:
 
     with engine.begin() as conn:
         for name, table, cols, where in INDEXES:
+            if _index_exists(conn, table, name):
+                created.append(name)
+                continue
             sql = f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {table} ({cols})"
-            if where:
+            where_clause = _where_clause_for_dialect(where, dialect)
+            if where_clause:
                 # Postgres + SQLite both support partial indexes
-                sql += f" WHERE {where}"
+                sql += f" WHERE {where_clause}"
             try:
                 conn.execute(text(sql))
                 created.append(name)

@@ -3,7 +3,10 @@ Idempotent skjema-migrering for de nye feltene som ble lagt til i
 modernisering-runden:
 
 - customers.delivers_on_holidays (BOOLEAN, default 0)
+- customers.susoft_price_tier (VARCHAR(20), default 'price_1')
 - products.vat_class (VARCHAR, default 'food_15')
+- products.alternative_price (NUMERIC(10,2), NULL)
+- products.alternative_vat_rate (NUMERIC(5,2), NULL)
 - orders.next_retry_at (DATETIME, NULL)
 - orders.sync_locked_until (DATETIME, NULL)
 
@@ -57,12 +60,20 @@ def main() -> int:
         add_column_if_missing(
             conn, "customers", "delivers_on_holidays", "BOOLEAN DEFAULT 0 NOT NULL"
         )
+        add_column_if_missing(
+            conn,
+            "customers",
+            "susoft_price_tier",
+            "VARCHAR(20) DEFAULT 'price_1' NOT NULL",
+        )
 
         # products
         add_column_if_missing(
             conn, "products", "vat_class", "VARCHAR(20) DEFAULT 'food_15' NOT NULL"
         )
         add_column_if_missing(conn, "products", "allergens", "VARCHAR(500)")
+        add_column_if_missing(conn, "products", "alternative_price", "NUMERIC(10,2)")
+        add_column_if_missing(conn, "products", "alternative_vat_rate", "NUMERIC(5,2)")
 
         # orders
         add_column_if_missing(conn, "orders", "next_retry_at", "DATETIME")
