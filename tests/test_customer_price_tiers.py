@@ -4,6 +4,8 @@ import asyncio
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy import text
+
 from app.api.pricing import get_effective_pricing, propagate_customer_price_tier_change
 from app.models import (
     CustomerPriceTier,
@@ -42,6 +44,17 @@ def test_get_effective_pricing_uses_customer_price_tier_vat_and_price(
     assert vat_rate == Decimal("15.00")
     assert is_specific is False
     assert price_entry_id is None
+
+
+def test_customer_price_tier_loads_lowercase_database_value(db_session, customer):
+    db_session.execute(
+        text("UPDATE customers SET susoft_price_tier = :tier WHERE id = :id"),
+        {"tier": "price_1", "id": customer.id},
+    )
+    db_session.commit()
+
+    db_session.expire(customer, ["susoft_price_tier"])
+    assert customer.susoft_price_tier == CustomerPriceTier.PRICE_1
 
 
 def test_get_effective_pricing_keeps_customer_override_price_but_uses_selected_vat(

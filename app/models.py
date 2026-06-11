@@ -135,6 +135,10 @@ class CustomerPriceTier(str, PyEnum):
     PRICE_2 = "price_2"
 
 
+def _enum_values(enum_cls) -> list[str]:
+    return [member.value for member in enum_cls]
+
+
 VAT_CLASS_RATES: dict[VatClass, Decimal] = {
     VatClass.FOOD_15: Decimal("15.00"),
     VatClass.STANDARD_25: Decimal("25.00"),
@@ -323,7 +327,12 @@ class Customer(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     )
 
     susoft_price_tier: Mapped[CustomerPriceTier] = mapped_column(
-        Enum(CustomerPriceTier, native_enum=False, length=20),
+        Enum(
+            CustomerPriceTier,
+            native_enum=False,
+            length=20,
+            values_callable=_enum_values,
+        ),
         default=CustomerPriceTier.PRICE_1,
         server_default=CustomerPriceTier.PRICE_1.value,
         nullable=False,
