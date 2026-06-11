@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import inspect, text
+from sqlalchemy import Boolean, inspect, text
 from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
@@ -94,20 +94,28 @@ def _column_ddl(column, dialect) -> str:
     is_postgres = dialect.name == "postgresql"
 
     if column.server_default is not None:
-        parts.append(f"DEFAULT {column.server_default.arg}")
+        parts.append(f"DEFAULT {_format_default_literal(column.server_default.arg, column, is_postgres)}")
     elif column.default is not None and getattr(column.default, "is_scalar", False):
-        v = column.default.arg
-        if isinstance(v, bool):
-            # Postgres krever ekte boolean-literal (TRUE/FALSE), ikke 0/1.
-            if is_postgres:
-                v = "TRUE" if v else "FALSE"
-            else:
-                v = 1 if v else 0
-        elif isinstance(v, str):
-            v = repr(v)
-        parts.append(f"DEFAULT {v}")
+        parts.append(f"DEFAULT {_format_default_literal(column.default.arg, column, is_postgres)}")
 
     return " ".join(parts)
+
+
+def _format_default_literal(raw_value: Any, column, is_postgres: bool) -> str:
+    value = getattr(raw_value, "text", raw_value)
+
+    if isinstance(column.type, Boolean):
+        normalized = str(value).strip().strip("'\"").lower()
+        is_true = normalized in {"1", "true", "t", "yes", "on"}
+        return "TRUE" if is_postgres and is_true else "FALSE" if is_postgres else "1" if is_true else "0"
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {"'", '"'}:
+            return stripped
+        return repr(value)
+
+    return str(value)
 
 
 def sync_schema(engine: Engine) -> dict[str, list[str]]:
