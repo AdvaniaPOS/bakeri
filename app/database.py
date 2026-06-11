@@ -10,11 +10,24 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Use SQLite for development if DATABASE_URL not set
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "sqlite:///./lampeland_bakeri.db"
-)
+
+def _load_database_url() -> str:
+    database_url = (os.getenv("DATABASE_URL") or "").strip()
+    app_env = (os.getenv("APP_ENV") or "development").strip().lower()
+
+    if database_url:
+        return database_url
+
+    if app_env in {"production", "prod", "staging"}:
+        raise RuntimeError(
+            "DATABASE_URL environment variable is required in production-like environments. "
+            "Refusing to fall back to a local SQLite database."
+        )
+
+    return "sqlite:///./lampeland_bakeri.db"
+
+
+DATABASE_URL = _load_database_url()
 
 # Configure engine based on database type
 if DATABASE_URL.startswith("sqlite"):

@@ -21,6 +21,25 @@ DB_USER="${DB_USER:-postgres}"
 PGPASSWORD="${PGPASSWORD:-postgres}"
 export PGPASSWORD
 
+APP_ENV_VALUE="${APP_ENV:-}"
+if [ -z "$APP_ENV_VALUE" ]; then
+  REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+  ENV_FILE="$REPO_DIR/.env"
+  if [ -f "$ENV_FILE" ]; then
+    APP_ENV_VALUE="$(grep -E '^APP_ENV=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d '\r' | sed -e "s/^'//" -e "s/'$//" -e 's/^"//' -e 's/"$//')"
+  fi
+fi
+
+case "${APP_ENV_VALUE,,}" in
+  production|prod|staging)
+    if [ "${ALLOW_PROD_RESTORE:-}" != "YES_I_UNDERSTAND" ]; then
+      echo "Refuserer aa restore over production-liknende database uten eksplisitt override." >&2
+      echo "Sett ALLOW_PROD_RESTORE=YES_I_UNDERSTAND hvis dette er bevisst." >&2
+      exit 2
+    fi
+    ;;
+esac
+
 # Auto-detekter psql
 PSQL="${PSQL:-}"
 if [ -z "$PSQL" ]; then

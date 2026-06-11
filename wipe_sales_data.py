@@ -12,6 +12,7 @@ Bruk:
     python wipe_sales_data.py --confirm WIPE
 """
 import argparse
+import os
 import sys
 
 from sqlalchemy import text
@@ -22,7 +23,20 @@ from app import auth_models, models  # noqa: F401
 from app.auth_models import User, UserRole
 
 
+def _guard_production_wipe() -> None:
+    app_env = (os.getenv("APP_ENV") or "").strip().lower()
+    if app_env in {"production", "prod", "staging"} and os.getenv("ALLOW_PROD_WIPE") != "YES_I_UNDERSTAND":
+        print(
+            "Refuserer aa wipe salgsdata i production-liknende miljo. "
+            "Sett ALLOW_PROD_WIPE=YES_I_UNDERSTAND hvis dette er bevisst.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def main():
+    _guard_production_wipe()
+
     parser = argparse.ArgumentParser(
         description="Wipe all sales/tenant data, keep SUPER_ADMIN users"
     )

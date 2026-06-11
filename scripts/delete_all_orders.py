@@ -11,6 +11,7 @@ Bruk:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from sqlalchemy import delete, select, func
@@ -18,6 +19,17 @@ from sqlalchemy import delete, select, func
 from app.database import SessionLocal
 from app import auth_models  # noqa: F401  -- registrer Tenant for FK-resolusjon
 from app.models import Order, OrderLine, OrderAmendment
+
+
+def _guard_production_delete() -> None:
+    app_env = (os.getenv("APP_ENV") or "").strip().lower()
+    if app_env in {"production", "prod", "staging"} and os.getenv("ALLOW_PROD_DELETE_ORDERS") != "YES_I_UNDERSTAND":
+        print(
+            "Refuserer aa hard-delete ordrer i production-liknende miljo. "
+            "Sett ALLOW_PROD_DELETE_ORDERS=YES_I_UNDERSTAND hvis dette er bevisst.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 def main() -> int:
@@ -53,6 +65,8 @@ def main() -> int:
         if args.dry_run:
             print("(dry-run, ingen sletting utført)")
             return 0
+
+        _guard_production_delete()
 
         if not args.yes:
             print("Avbrutt. Kjør med --yes for å bekrefte.")

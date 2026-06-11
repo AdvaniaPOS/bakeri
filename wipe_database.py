@@ -10,6 +10,7 @@ Bruk:
     python wipe_database.py --confirm WIPE
 """
 import argparse
+import os
 import sys
 
 from sqlalchemy import text
@@ -19,7 +20,20 @@ from app.database import engine, Base
 from app import auth_models, models  # noqa: F401
 
 
+def _guard_production_wipe() -> None:
+    app_env = (os.getenv("APP_ENV") or "").strip().lower()
+    if app_env in {"production", "prod", "staging"} and os.getenv("ALLOW_PROD_WIPE") != "YES_I_UNDERSTAND":
+        print(
+            "Refuserer aa wipe database i production-liknende miljo. "
+            "Sett ALLOW_PROD_WIPE=YES_I_UNDERSTAND hvis dette er bevisst.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def main():
+    _guard_production_wipe()
+
     parser = argparse.ArgumentParser(description="Wipe all tables in the database")
     parser.add_argument(
         "--confirm",
