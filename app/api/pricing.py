@@ -14,7 +14,7 @@ from ..dependencies import get_current_tenant
 from ..auth_models import Tenant
 from ..models import (
     CustomerProductPrice, Customer, Product, Order, OrderLine,
-    AuditLog, AuditAction, SyncStatus, OrderStatus
+    AuditLog, AuditAction, SyncStatus, OrderStatus, CustomerPriceTier
 )
 from ..schemas import (
     CustomerProductPriceCreate, CustomerProductPriceUpdate,
@@ -27,16 +27,54 @@ from ..tenant_scope import get_or_404
 router = APIRouter(prefix="/pricing", tags=["Pricing"])
 
 
-def get_effective_price(
+def _normalize_customer_price_tier(value) -> CustomerPriceTier:
+    if value == CustomerPriceTier.PRICE_2 or str(value) == CustomerPriceTier.PRICE_2.value:
+        return CustomerPriceTier.PRICE_2
+    return CustomerPriceTier.PRICE_1
+
+
+def _resolve_product_pricing(product: Product, price_tier: CustomerPriceTier) -> tuple[Decimal, Decimal]:
+    if price_tier == CustomerPriceTier.PRICE_2 and product.alternative_price is not None:
+        alternative_vat = product.alternative_vat_rate
+        return product.alternative_price, (alternative_vat if alternative_vat is not None else product.vat_rate)
+    return product.default_price, product.vat_rate
+
+
+def _set_line_pricing(line: OrderLine, unit_price: Decimal, vat_rate: Decimal) -> bool:
+    excl = (Decimal(line.quantity) * unit_price).quantize(Decimal("0.01"))
+    vat = (excl * vat_rate / Decimal("100")).quantize(Decimal("0.01"))
+    incl = (excl + vat).quantize(Decimal("0.01"))
+
+    changed = (
+        line.unit_price != unit_price
+        or line.vat_rate != vat_rate
+        or line.line_amount_excl_vat != excl
+        or line.line_vat != vat
+        or line.line_amount_incl_vat != incl
+    )
+    if not changed:
+        return False
+
+    line.unit_price = unit_price
+    line.vat_rate = vat_rate
+    line.line_amount_excl_vat = excl
+    line.line_vat = vat
+    line.line_amount_incl_vat = incl
+    line.price_updated_at = to_naive_utc(now_utc())
+    return True
+
+
+def get_effective_pricing(
     db: Session,
     customer_id: int,
     product_id: int,
     target_date: date,
     tenant_id: Optional[int] = None,
-) -> tuple[Decimal, bool, Optional[int]]:
-    """
-    Get effective price. If tenant_id is provided, queries are tenant-scoped.
-    """
+    *,
+    customer: Optional[Customer] = None,
+    product: Optional[Product] = None,
+) -> tuple[Decimal, Decimal, bool, Optional[int]]:
+    """Get effective price and VAT for a customer/product/date."""
     q = (
         select(CustomerProductPrice)
         .where(
@@ -55,13 +93,42 @@ def get_effective_price(
         q = q.where(CustomerProductPrice.tenant_id == tenant_id)
 
     price_entry = db.execute(q).scalar_one_or_none()
-    if price_entry:
-        return (price_entry.price, True, price_entry.id)
 
-    product = db.get(Product, product_id)
-    if not product:
+    customer_obj = customer or db.get(Customer, customer_id)
+    if not customer_obj:
+        raise ValueError(f"Customer {customer_id} not found")
+
+    product_obj = product or db.get(Product, product_id)
+    if not product_obj:
         raise ValueError(f"Product {product_id} not found")
-    return (product.default_price, False, None)
+
+    price_tier = _normalize_customer_price_tier(getattr(customer_obj, "susoft_price_tier", None))
+    base_price, vat_rate = _resolve_product_pricing(product_obj, price_tier)
+
+    if price_entry:
+        return (price_entry.price, vat_rate, True, price_entry.id)
+
+    return (base_price, vat_rate, False, None)
+
+
+def get_effective_price(
+    db: Session,
+    customer_id: int,
+    product_id: int,
+    target_date: date,
+    tenant_id: Optional[int] = None,
+) -> tuple[Decimal, bool, Optional[int]]:
+    """
+    Get effective price. If tenant_id is provided, queries are tenant-scoped.
+    """
+    price, _vat_rate, is_customer_specific, price_entry_id = get_effective_pricing(
+        db,
+        customer_id,
+        product_id,
+        target_date,
+        tenant_id=tenant_id,
+    )
+    return (price, is_customer_specific, price_entry_id)
 
 
 @router.post("/lookup", response_model=PriceLookupResponse)
@@ -305,6 +372,10 @@ async def propagate_price_change(
         if not price_entry or price_entry.tenant_id != tenant_id:
             return
 
+        customer = db.get(Customer, customer_id)
+        if not customer or customer.tenant_id != tenant_id:
+            return
+
         affected_lines = db.execute(
             select(OrderLine)
             .join(Order)
@@ -323,15 +394,19 @@ async def propagate_price_change(
 
         for line in affected_lines:
             order = db.get(Order, line.order_id)
-            new_price, _, _ = get_effective_price(
-                db, customer_id, product_id, order.delivery_date, tenant_id=tenant_id
+            product = db.get(Product, line.product_id)
+            if not order or not product:
+                continue
+            new_price, new_vat_rate, _, _ = get_effective_pricing(
+                db,
+                customer_id,
+                product_id,
+                order.delivery_date,
+                tenant_id=tenant_id,
+                customer=customer,
+                product=product,
             )
-            if line.unit_price != new_price:
-                line.unit_price = new_price
-                line.line_amount_excl_vat = new_price * line.quantity
-                line.line_vat = line.line_amount_excl_vat * (line.vat_rate / 100)
-                line.line_amount_incl_vat = line.line_amount_excl_vat + line.line_vat
-                line.price_updated_at = to_naive_utc(now_utc())
+            if _set_line_pricing(line, new_price, new_vat_rate):
                 orders_to_update.add(order)
 
         for order in orders_to_update:
@@ -356,6 +431,74 @@ async def propagate_price_change(
                     # ikke v\u00e6re DRAFT, men vi kaller via wrapper for trygghet.
                     _o = db.get(Order, order_id)
                     if _o and _o.status != OrderStatus.DRAFT:
+                        sync_order.delay(order_id)
+            except Exception:
+                pass
+    finally:
+        db.close()
+
+
+async def propagate_customer_price_tier_change(
+    customer_id: int,
+    tenant_id: int,
+):
+    """Reprice unlocked orders when a customer switches SuSoft price tier."""
+    from ..database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        customer = db.get(Customer, customer_id)
+        if not customer or customer.tenant_id != tenant_id:
+            return
+
+        affected_lines = db.execute(
+            select(OrderLine)
+            .join(Order)
+            .where(
+                Order.tenant_id == tenant_id,
+                Order.customer_id == customer_id,
+                Order.is_locked == False,
+                Order.is_deleted == False,
+            )
+        ).scalars().all()
+
+        orders_to_update = set()
+        orders_needing_resync = set()
+
+        for line in affected_lines:
+            order = db.get(Order, line.order_id)
+            product = db.get(Product, line.product_id)
+            if not order or not product:
+                continue
+            new_price, new_vat_rate, _, _ = get_effective_pricing(
+                db,
+                customer_id,
+                line.product_id,
+                order.delivery_date,
+                tenant_id=tenant_id,
+                customer=customer,
+                product=product,
+            )
+            if _set_line_pricing(line, new_price, new_vat_rate):
+                orders_to_update.add(order)
+
+        for order in orders_to_update:
+            order.total_amount_excl_vat = sum(l.line_amount_excl_vat for l in order.lines)
+            order.total_vat = sum(l.line_vat for l in order.lines)
+            order.total_amount_incl_vat = sum(l.line_amount_incl_vat for l in order.lines)
+            if order.sync_status == SyncStatus.SYNCED:
+                order.sync_status = SyncStatus.PENDING
+                order.next_retry_at = None
+                orders_needing_resync.add(order.id)
+
+        db.commit()
+
+        if orders_needing_resync:
+            try:
+                from ..tasks import sync_order
+                for order_id in orders_needing_resync:
+                    order = db.get(Order, order_id)
+                    if order and order.status != OrderStatus.DRAFT:
                         sync_order.delay(order_id)
             except Exception:
                 pass

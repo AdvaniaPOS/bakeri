@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select, func, update
 from sqlalchemy.orm import Session, selectinload
@@ -156,13 +156,22 @@ async def create_customer(
 async def update_customer(
     customer_id: int,
     data: CustomerUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
     customer = get_or_404(db, Customer, customer_id, tenant.id, "Customer not found")
 
     update_data = data.model_dump(exclude_unset=True)
-    old_values = {k: getattr(customer, k) for k in update_data.keys()}
+    old_values = {
+        key: (getattr(customer, key).value if hasattr(getattr(customer, key), "value") else getattr(customer, key))
+        for key in update_data.keys()
+    }
+    audit_update_data = data.model_dump(exclude_unset=True, mode="json")
+    price_tier_changed = (
+        "susoft_price_tier" in update_data
+        and old_values.get("susoft_price_tier") != audit_update_data.get("susoft_price_tier")
+    )
 
     for key, value in update_data.items():
         setattr(customer, key, value)
@@ -176,10 +185,19 @@ async def update_customer(
         entity_id=customer.id,
         action=AuditAction.UPDATE,
         old_values=old_values,
-        new_values=update_data,
+        new_values=audit_update_data,
     )
     db.add(audit)
     db.commit()
+
+    if price_tier_changed:
+        from .pricing import propagate_customer_price_tier_change
+
+        background_tasks.add_task(
+            propagate_customer_price_tier_change,
+            customer.id,
+            tenant.id,
+        )
 
     return CustomerResponse.model_validate(customer)
 

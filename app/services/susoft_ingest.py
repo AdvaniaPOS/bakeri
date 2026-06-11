@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import uuid as uuid_module
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
@@ -77,6 +78,44 @@ def _get_or_create_unknown_customer(db: Session, tenant_id: int) -> Customer:
     db.flush()
     logger.info("Opprettet 'Ukjent kunde' for tenant %s (id=%s)", tenant_id, customer.id)
     return customer
+
+
+def _extract_local_order_refs_from_alt_id(
+    alt_id_raw: Any,
+    tenant_id: int,
+) -> Tuple[Optional[uuid_module.UUID], Optional[int]]:
+    """
+    Parse alternativeId fra SuSoft til lokal ordreidentitet.
+
+    St\u00f8tter nytt UUID-format `t<tenant>-ou<uuidhex>` og forrige tenant-
+    prefikset format `t<tenant>-o<id>`. Nakne integer-verdier matches ikke
+    lenger siden de kan kollidere etter DB-reset/kloning.
+    """
+    if alt_id_raw in (None, ""):
+        return None, None
+
+    alt_id = str(alt_id_raw).strip()
+    prefix = f"t{tenant_id}-"
+    if not alt_id.startswith(prefix):
+        return None, None
+
+    local_token = alt_id[len(prefix):]
+    if local_token.startswith("ou"):
+        uuid_token = local_token[2:].strip()
+        if not uuid_token:
+            return None, None
+        try:
+            return uuid_module.UUID(uuid_token), None
+        except (TypeError, ValueError):
+            return None, None
+
+    if local_token.startswith("o"):
+        try:
+            return None, int(local_token[1:])
+        except (TypeError, ValueError):
+            return None, None
+
+    return None, None
 
 
 def _find_or_create_customer_from_payload(
@@ -220,19 +259,17 @@ def ingest_susoft_orders_for_tenant(
             uuid_str = str(uuid_val)
             order_no_str = str(row.get("orderNo") or "") or None
             alt_id_raw = row.get("alternativeId")
-            alt_id_int: Optional[int] = None
-            if alt_id_raw not in (None, ""):
-                try:
-                    alt_id_int = int(str(alt_id_raw).strip())
-                except (TypeError, ValueError):
-                    alt_id_int = None
+            alt_order_uuid, legacy_order_id = _extract_local_order_refs_from_alt_id(
+                alt_id_raw,
+                tenant_id,
+            )
 
             # Dedup-strategi:
             # 1) Match på susoft_uuid (vanlig pull-flow).
-            # 2) Match på alternativeId == lokal Order.id — denne raden er
-            #    SuSoft sin projeksjon av en ordre VI sendte opp (typisk
-            #    fra cart→invoice-flyten der vi POST'er /order). Da skal
-            #    vi linke, ikke opprette duplikat.
+            # 2) Match på alternativeId == lokal Order.order_uuid (nytt format)
+            #    eller tidligere tenant-prefikset Order.id-format. Denne raden
+            #    er da SuSoft sin projeksjon av en ordre VI sendte opp, og skal
+            #    linkes i stedet for å opprette duplikat.
             # 3) Match på susoft_order_id == orderNo (fallback hvis altId
             #    mangler men vi har stemplet orderNo lokalt).
             existing_order: Optional[Order] = None
@@ -246,11 +283,18 @@ def ingest_susoft_orders_for_tenant(
                 summary["skipped_existing"] += 1
                 continue
 
-            if alt_id_int is not None:
+            if alt_order_uuid is not None:
                 existing_order = db.execute(
                     select(Order).where(
                         Order.tenant_id == tenant_id,
-                        Order.id == alt_id_int,
+                        Order.order_uuid == alt_order_uuid,
+                    )
+                ).scalar_one_or_none()
+            if existing_order is None and legacy_order_id is not None:
+                existing_order = db.execute(
+                    select(Order).where(
+                        Order.tenant_id == tenant_id,
+                        Order.id == legacy_order_id,
                     )
                 ).scalar_one_or_none()
             if existing_order is None and order_no_str:

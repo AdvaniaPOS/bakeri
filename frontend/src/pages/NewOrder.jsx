@@ -54,6 +54,29 @@ export default function NewOrder() {
     fetchData();
   }, []);
 
+  const getProductPriceForCustomer = (product, customer = selectedCustomer) => {
+    if (!product) return 0;
+    const usePrice2 = customer?.susoft_price_tier === 'price_2';
+    if (usePrice2 && product.alternative_price != null) {
+      return parseFloat(product.alternative_price || 0);
+    }
+    return parseFloat(product.default_price || product.price || 0);
+  };
+
+  useEffect(() => {
+    if (!selectedCustomer || products.length === 0) {
+      return;
+    }
+    setOrderLines((prev) => prev.map((line) => {
+      const product = products.find((item) => item.id === line.product_id);
+      if (!product) {
+        return line;
+      }
+      const unitPrice = getProductPriceForCustomer(product, selectedCustomer);
+      return line.unit_price === unitPrice ? line : { ...line, unit_price: unitPrice };
+    }));
+  }, [selectedCustomer, products]);
+
   const filteredProducts = products.filter(p => 
     p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
     p.sku?.toLowerCase().includes(productSearch.toLowerCase()) ||
@@ -75,7 +98,7 @@ export default function NewOrder() {
         product_name: product.name,
         product_sku: product.sku,
         quantity: 1,
-        unit_price: parseFloat(product.price_incl_vat || product.default_price || product.price || 0),
+        unit_price: getProductPriceForCustomer(product),
         notes: ''
       }]);
     }
@@ -221,6 +244,7 @@ export default function NewOrder() {
               {selectedCustomer && (
                 <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm">
                   <p className="font-medium">{selectedCustomer.name}</p>
+                  <p className="text-gray-600">{selectedCustomer.susoft_price_tier === 'price_2' ? 'Prisprofil: Pris 2' : 'Prisprofil: Pris 1'}</p>
                   {selectedCustomer.address && <p className="text-gray-600">{selectedCustomer.address}</p>}
                   {selectedCustomer.city && <p className="text-gray-600">{selectedCustomer.zip_code} {selectedCustomer.city}</p>}
                   {selectedCustomer.email && <p className="text-gray-600">{selectedCustomer.email}</p>}
@@ -459,7 +483,7 @@ export default function NewOrder() {
                       </div>
                       <div className="text-right">
                         <p className="font-semibold text-amber-600">
-                          kr {parseFloat(product.price_incl_vat || product.default_price || product.price || 0).toFixed(2)}
+                          kr {getProductPriceForCustomer(product).toFixed(2)}
                         </p>
                         <p className="text-xs text-gray-500">{product.unit || 'stk'}</p>
                       </div>

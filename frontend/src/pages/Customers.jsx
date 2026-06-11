@@ -314,7 +314,12 @@ export default function Customers() {
                         <div className="w-7 h-7 bg-amber-100 rounded flex items-center justify-center flex-shrink-0">
                           <Building2 className="w-4 h-4 text-amber-600" />
                         </div>
-                        <span className="font-medium text-gray-900">{customer.name}</span>
+                        <div>
+                          <div className="font-medium text-gray-900">{customer.name}</div>
+                          <div className="text-xs text-gray-500">
+                            {customer.susoft_price_tier === 'price_2' ? 'Prisprofil: Pris 2' : 'Prisprofil: Pris 1'}
+                          </div>
+                        </div>
                         <div className="flex items-center gap-1 ml-1">
                           {customer.has_active_template ? (
                             <span title="Fastbestilling (mal aktiv)" className="inline-flex items-center justify-center w-5 h-5 rounded bg-green-100 text-green-700">
@@ -514,6 +519,7 @@ function CustomerModal({ customer, onClose, onSave }) {
     city: customer?.city || '',
     delivery_instructions: customer?.delivery_instructions || '',
     order_lead_days: customer?.order_lead_days || 14,
+    susoft_price_tier: customer?.susoft_price_tier || 'price_1',
     is_active: customer?.is_active ?? true,
     restrict_to_favorites: customer?.restrict_to_favorites ?? false,
   });
@@ -565,6 +571,18 @@ function CustomerModal({ customer, onClose, onSave }) {
               <label className="label">Ordreforskudd (dager)</label>
               <input type="number" value={formData.order_lead_days} onChange={(e) => setFormData({...formData, order_lead_days: parseInt(e.target.value) || 14})} className="input" min="7" max="84" />
               <p className="text-xs text-gray-500 mt-1">{(formData.order_lead_days / 7).toFixed(1)} uker fremover</p>
+            </div>
+            <div>
+              <label className="label">SuSoft prisprofil</label>
+              <select
+                value={formData.susoft_price_tier}
+                onChange={(e) => setFormData({ ...formData, susoft_price_tier: e.target.value })}
+                className="input"
+              >
+                <option value="price_1">Pris 1</option>
+                <option value="price_2">Pris 2</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">Pris 2 bruker SuSoft alternativePrice og alternativeVatPercent.</p>
             </div>
             <div className="col-span-2">
               <label className="flex items-center gap-2 text-sm">
@@ -977,7 +995,7 @@ function PlanModal({ customer, onClose, onChanged }) {
         body: JSON.stringify({ order_lead_days: leadDays, is_active: isActive }),
       });
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || 'Kunne ikke lagre');
       }
       await loadStatus();
@@ -999,7 +1017,7 @@ function PlanModal({ customer, onClose, onChanged }) {
         { method: 'POST' }
       );
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || 'Generering feilet');
       }
       const data = await res.json();

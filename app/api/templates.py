@@ -395,7 +395,7 @@ async def apply_template_to_existing_orders(
     from decimal import Decimal
     from ..models import Order, OrderLine, OrderStatus, SyncStatus
     from ..cutoff import is_order_locked
-    from .pricing import get_effective_price
+    from .pricing import get_effective_pricing
     from .orders import calculate_line_totals, recalculate_order_totals
 
     template = _get_template(db, template_id, tenant.id, with_items=True)
@@ -441,10 +441,15 @@ async def apply_template_to_existing_orders(
             product = db.get(Product, tli.product_id)
             if not product or product.is_deleted or product.tenant_id != tenant.id:
                 continue
-            unit_price, _is_specific, _price_id = get_effective_price(
-                db, order.customer_id, product.id, order.delivery_date, tenant_id=tenant.id
+            unit_price, vat_rate, _is_specific, _price_id = get_effective_pricing(
+                db,
+                order.customer_id,
+                product.id,
+                order.delivery_date,
+                tenant_id=tenant.id,
+                customer=order.customer,
+                product=product,
             )
-            vat_rate = Decimal(str(product.vat_rate or 15))
             excl, vat, incl = calculate_line_totals(tli.quantity, unit_price, vat_rate)
             line = OrderLine(
                 tenant_id=tenant.id,

@@ -1,8 +1,9 @@
 """Tester for ordregenerering — _generate_for_date."""
 from datetime import date
+from decimal import Decimal
 
 from app.api.orders import _generate_for_date
-from app.models import Order, OrderDateOverride
+from app.models import Order, OrderDateOverride, OrderStatus, SyncStatus
 
 
 class TestGenerateForDate:
@@ -39,6 +40,38 @@ class TestGenerateForDate:
         # Andre kjøring
         result = _generate_for_date(db_session, tenant.id, target)
         assert any(s.get("reason") == "already_exists" for s in result["skipped"])
+
+    def test_skips_when_multiple_orders_already_exist(self, db_session, tenant, customer, template_with_item):
+        """Eksisterende dubletter i data skal ikke krasje periodeplan-generering."""
+        target = date(2026, 5, 19)
+        order1 = Order(
+            tenant_id=tenant.id,
+            customer_id=customer.id,
+            delivery_date=target,
+            status=OrderStatus.DRAFT,
+            sync_status=SyncStatus.PENDING,
+            total_amount_excl_vat=Decimal("0.00"),
+            total_vat=Decimal("0.00"),
+            total_amount_incl_vat=Decimal("0.00"),
+        )
+        order2 = Order(
+            tenant_id=tenant.id,
+            customer_id=customer.id,
+            delivery_date=target,
+            status=OrderStatus.DRAFT,
+            sync_status=SyncStatus.PENDING,
+            total_amount_excl_vat=Decimal("0.00"),
+            total_vat=Decimal("0.00"),
+            total_amount_incl_vat=Decimal("0.00"),
+        )
+        db_session.add_all([order1, order2])
+        db_session.commit()
+
+        result = _generate_for_date(db_session, tenant.id, target)
+
+        skipped = [s for s in result["skipped"] if s.get("reason") == "already_exists"]
+        assert skipped
+        assert skipped[0]["order_id"] == order1.id
 
     def test_no_order_on_wrong_weekday(self, db_session, tenant, customer, template_with_item):
         """Onsdag (day_of_week=3) — mal har ingen items, ingen ordre."""

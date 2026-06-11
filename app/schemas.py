@@ -67,6 +67,11 @@ class VatClassEnum(str, Enum):
     STANDARD_25 = "standard_25"
     REDUCED_12 = "reduced_12"
     ZERO = "zero"
+
+
+class CustomerPriceTierEnum(str, Enum):
+    PRICE_1 = "price_1"
+    PRICE_2 = "price_2"
 # =============================================================================
 # BASE SCHEMAS
 # =============================================================================
@@ -101,6 +106,10 @@ class CustomerBase(BaseModel):
     delivery_instructions: Optional[str] = None
     
     order_lead_days: int = Field(default=14, ge=7, le=84)
+    susoft_price_tier: CustomerPriceTierEnum = Field(
+        default=CustomerPriceTierEnum.PRICE_1,
+        description="Hvilket SuSoft-prissett kunden bruker: price_1 eller price_2.",
+    )
     delivers_on_holidays: bool = Field(
         default=False,
         description=(
@@ -141,6 +150,7 @@ class CustomerUpdate(BaseModel):
     delivery_window_end: Optional[time] = None
     delivery_instructions: Optional[str] = None
     order_lead_days: Optional[int] = Field(None, ge=7, le=84)
+    susoft_price_tier: Optional[CustomerPriceTierEnum] = None
     delivers_on_holidays: Optional[bool] = None
     restrict_to_favorites: Optional[bool] = None
     is_active: Optional[bool] = None
@@ -183,8 +193,10 @@ class ProductBase(BaseModel):
     category: Optional[str] = Field(None, max_length=100)
     
     default_price: Decimal = Field(..., ge=0, decimal_places=2)
+    alternative_price: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
     unit: str = Field(default="stk", max_length=20)
     vat_rate: Decimal = Field(default=Decimal("15.00"), ge=0, le=100)
+    alternative_vat_rate: Optional[Decimal] = Field(None, ge=0, le=100)
     vat_class: VatClassEnum = Field(
         default=VatClassEnum.FOOD_15,
         description="MVA-klasse. FOOD_15 for bakerivarer, STANDARD_25 for andre varer.",

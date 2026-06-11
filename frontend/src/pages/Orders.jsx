@@ -1155,9 +1155,8 @@ function OrderEditModal({ orderId, onClose, onSaved, onDeleted }) {
                           <div className="text-xs text-gray-500">
                             {(() => {
                               const qty = Number(line.quantity) || 0;
-                              const incl = Number(line.line_amount_incl_vat) || 0;
-                              const unitIncl = qty > 0 ? incl / qty : Number(line.unit_price) || 0;
-                              return `kr ${unitIncl.toLocaleString('nb-NO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} pr. stk`;
+                              const unitExcl = Number(line.unit_price) || (qty > 0 ? (Number(line.line_amount_excl_vat) || 0) / qty : 0);
+                              return `kr ${unitExcl.toLocaleString('nb-NO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} pr. stk`;
                             })()}
                             {line.is_adhoc_quantity && line.original_template_quantity != null && (
                               <span className="ml-2 text-amber-700">(opprinnelig {line.original_template_quantity})</span>

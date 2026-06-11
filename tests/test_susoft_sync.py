@@ -122,3 +122,30 @@ def test_susoft_creates_new_inactive_product(db_session, tenant, susoft_service)
     ).first()
     assert p is not None
     assert p.is_active is False
+
+
+def test_susoft_sync_stores_alternative_price_and_vat(db_session, tenant, susoft_service):
+    _stub_products(susoft_service, [
+        {
+            "id": "P500",
+            "name": "Takeaway-bolle",
+            "retailPrice": 30.0,
+            "alternativePrice": 24.0,
+            "vatPercent": 25,
+            "alternativeVatPercent": 15,
+            "active": True,
+        },
+    ])
+
+    result = susoft_service.sync_products_from_susoft()
+    assert result["created"] == 1
+
+    p = db_session.query(Product).filter(
+        Product.tenant_id == tenant.id,
+        Product.susoft_product_id == "P500",
+    ).first()
+    assert p is not None
+    assert p.default_price == Decimal("30.00")
+    assert p.alternative_price == Decimal("24.00")
+    assert p.vat_rate == Decimal("25.00")
+    assert p.alternative_vat_rate == Decimal("15.00")

@@ -125,7 +125,7 @@ def _apply_overrides_to_existing_order(
     Stille no-op hvis ordre er låst (cut-off passert) eller ikke finnes.
     """
     from sqlalchemy.orm import selectinload as _sel
-    from .pricing import get_effective_price
+    from .pricing import get_effective_pricing
     from .orders import calculate_line_totals, recalculate_order_totals
 
     order = db.execute(
@@ -168,17 +168,22 @@ def _apply_overrides_to_existing_order(
             existing_line.line_vat = vat
             existing_line.line_amount_incl_vat = incl
         else:
-            unit_price, _, _ = get_effective_price(
-                db, customer_id, product_id, override_date, tenant_id=tenant_id
+            unit_price, vat_rate, _, _ = get_effective_pricing(
+                db,
+                customer_id,
+                product_id,
+                override_date,
+                tenant_id=tenant_id,
+                product=product,
             )
-            excl, vat, incl = calculate_line_totals(quantity, unit_price, product.vat_rate)
+            excl, vat, incl = calculate_line_totals(quantity, unit_price, vat_rate)
             new_line = OrderLine(
                 tenant_id=tenant_id,
                 order_id=order.id,
                 product_id=product_id,
                 quantity=quantity,
                 unit_price=unit_price,
-                vat_rate=product.vat_rate,
+                vat_rate=vat_rate,
                 line_amount_excl_vat=excl,
                 line_vat=vat,
                 line_amount_incl_vat=incl,

@@ -30,7 +30,7 @@ from ..models import (
     CustomerFavoriteProduct,
 )
 from ..schemas import OrderResponse
-from .pricing import get_effective_price
+from .pricing import get_effective_pricing
 from ..cutoff import is_order_locked
 from ..services.order_numbering import allocate_order_no
 from ..time_utils import today_oslo, is_past_cutoff, is_past_cutoff_tenant, earliest_delivery_date
@@ -259,12 +259,20 @@ def list_portal_favorites(
         if not p or not p.is_active or p.is_deleted:
             continue
         try:
-            price, _, _ = get_effective_price(db, customer_id, p.id, today, tenant_id=user.tenant_id)
+            price, vat_rate, _, _ = get_effective_pricing(
+                db,
+                customer_id,
+                p.id,
+                today,
+                tenant_id=user.tenant_id,
+                product=p,
+            )
         except Exception:
             price = p.default_price
+            vat_rate = p.vat_rate
         out.append(PortalProduct(
             id=p.id, name=p.name, sku=p.sku, unit=p.unit,
-            unit_price=price, vat_rate=p.vat_rate,
+            unit_price=price, vat_rate=vat_rate,
             description=p.description,
             is_favorite=True,
             production_days=p.production_days or 0,
@@ -360,12 +368,20 @@ def list_products(
     today = today_oslo()
     for p in products:
         try:
-            price, _, _ = get_effective_price(db, customer_id, p.id, today, tenant_id=user.tenant_id)
+            price, vat_rate, _, _ = get_effective_pricing(
+                db,
+                customer_id,
+                p.id,
+                today,
+                tenant_id=user.tenant_id,
+                product=p,
+            )
         except Exception:
             price = p.default_price
+            vat_rate = p.vat_rate
         out.append(PortalProduct(
             id=p.id, name=p.name, sku=p.sku, unit=p.unit,
-            unit_price=price, vat_rate=p.vat_rate,
+            unit_price=price, vat_rate=vat_rate,
             description=p.description,
             is_favorite=p.id in fav_product_ids,
             production_days=p.production_days or 0,
@@ -502,10 +518,18 @@ def create_portal_order(
         if not product or product.tenant_id != user.tenant_id or not product.is_active:
             raise HTTPException(status_code=400, detail=f"Produkt {line.product_id} er ikke tilgjengelig")
         try:
-            unit_price, _, _ = get_effective_price(db, customer.id, product.id, data.delivery_date, tenant_id=user.tenant_id)
+            unit_price, vat_rate, _, _ = get_effective_pricing(
+                db,
+                customer.id,
+                product.id,
+                data.delivery_date,
+                tenant_id=user.tenant_id,
+                customer=customer,
+                product=product,
+            )
         except Exception:
             unit_price = product.default_price
-        vat_rate = product.vat_rate
+            vat_rate = product.vat_rate
         excl = (Decimal(line.quantity) * unit_price).quantize(Decimal("0.01"))
         vat = (excl * vat_rate / Decimal("100")).quantize(Decimal("0.01"))
         incl = (excl + vat).quantize(Decimal("0.01"))

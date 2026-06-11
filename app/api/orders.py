@@ -23,7 +23,7 @@ from ..schemas import (
     OrderLineCreate, OrderLineUpdate, OrderLineResponse,
     OrderAmendmentCreate, OrderAmendmentResponse,
 )
-from .pricing import get_effective_price
+from .pricing import get_effective_pricing
 from ..cutoff import ensure_editable, is_order_locked, stamp_locked_at
 from ..time_utils import now_oslo, today_oslo, to_naive_utc, now_utc
 from ..tenant_scope import get_or_404
@@ -358,15 +358,23 @@ async def create_order(
 
     for line_data in data.lines:
         product = get_or_404(db, Product, line_data.product_id, tenant.id, f"Product {line_data.product_id} not found")
-        unit_price, _, _ = get_effective_price(db, customer.id, product.id, data.delivery_date, tenant_id=tenant.id)
-        excl, vat, incl = calculate_line_totals(line_data.quantity, unit_price, product.vat_rate)
+        unit_price, vat_rate, _, _ = get_effective_pricing(
+            db,
+            customer.id,
+            product.id,
+            data.delivery_date,
+            tenant_id=tenant.id,
+            customer=customer,
+            product=product,
+        )
+        excl, vat, incl = calculate_line_totals(line_data.quantity, unit_price, vat_rate)
         line = OrderLine(
             tenant_id=tenant.id,
             order_id=order.id,
             product_id=product.id,
             quantity=line_data.quantity,
             unit_price=unit_price,
-            vat_rate=product.vat_rate,
+            vat_rate=vat_rate,
             line_amount_excl_vat=excl,
             line_vat=vat,
             line_amount_incl_vat=incl,
@@ -463,8 +471,16 @@ async def add_order_line(
     ensure_editable(order, user=user)
 
     product = get_or_404(db, Product, data.product_id, tenant.id, "Product not found")
-    unit_price, _, _ = get_effective_price(db, order.customer_id, product.id, order.delivery_date, tenant_id=tenant.id)
-    excl, vat, incl = calculate_line_totals(data.quantity, unit_price, product.vat_rate)
+    unit_price, vat_rate, _, _ = get_effective_pricing(
+        db,
+        order.customer_id,
+        product.id,
+        order.delivery_date,
+        tenant_id=tenant.id,
+        customer=order.customer,
+        product=product,
+    )
+    excl, vat, incl = calculate_line_totals(data.quantity, unit_price, vat_rate)
 
     line = OrderLine(
         tenant_id=tenant.id,
@@ -472,7 +488,7 @@ async def add_order_line(
         product_id=product.id,
         quantity=data.quantity,
         unit_price=unit_price,
-        vat_rate=product.vat_rate,
+        vat_rate=vat_rate,
         line_amount_excl_vat=excl,
         line_vat=vat,
         line_amount_incl_vat=incl,
@@ -1258,16 +1274,24 @@ def _generate_for_date(db: Session, tenant_id: int, target_date: date, customer_
             skipped.append({"customer_id": cust.id, "reason": "blocked_date"})
             continue
 
-        existing = db.execute(
-            select(Order).where(
+        existing_ids = db.execute(
+            select(Order.id).where(
                 Order.tenant_id == tenant_id,
                 Order.customer_id == cust.id,
                 Order.delivery_date == target_date,
                 Order.is_deleted == False,
-            )
-        ).scalar_one_or_none()
-        if existing:
-            skipped.append({"customer_id": cust.id, "reason": "already_exists", "order_id": existing.id})
+            ).order_by(Order.id).limit(2)
+        ).scalars().all()
+        if existing_ids:
+            if len(existing_ids) > 1:
+                logger.warning(
+                    "_generate_for_date fant flere eksisterende ordrer for tenant=%s customer=%s date=%s: %s",
+                    tenant_id,
+                    cust.id,
+                    target_date,
+                    existing_ids,
+                )
+            skipped.append({"customer_id": cust.id, "reason": "already_exists", "order_id": existing_ids[0]})
             continue
 
         items_today = [it for it in template.items if it.day_of_week == day_of_week]
@@ -1312,15 +1336,23 @@ def _generate_for_date(db: Session, tenant_id: int, target_date: date, customer_
             if qty <= 0:
                 product_ids_seen.add(item.product_id)
                 continue
-            unit_price, _, _ = get_effective_price(db, cust.id, product.id, target_date, tenant_id=tenant_id)
-            excl, vat, incl = calculate_line_totals(qty, unit_price, product.vat_rate)
+            unit_price, vat_rate, _, _ = get_effective_pricing(
+                db,
+                cust.id,
+                product.id,
+                target_date,
+                tenant_id=tenant_id,
+                customer=cust,
+                product=product,
+            )
+            excl, vat, incl = calculate_line_totals(qty, unit_price, vat_rate)
             line = OrderLine(
                 tenant_id=tenant_id,
                 order_id=order.id,
                 product_id=product.id,
                 quantity=qty,
                 unit_price=unit_price,
-                vat_rate=product.vat_rate,
+                vat_rate=vat_rate,
                 line_amount_excl_vat=excl,
                 line_vat=vat,
                 line_amount_incl_vat=incl,
@@ -1337,15 +1369,23 @@ def _generate_for_date(db: Session, tenant_id: int, target_date: date, customer_
             product = db.get(Product, pid)
             if not product or product.is_deleted or product.tenant_id != tenant_id:
                 continue
-            unit_price, _, _ = get_effective_price(db, cust.id, product.id, target_date, tenant_id=tenant_id)
-            excl, vat, incl = calculate_line_totals(override.quantity, unit_price, product.vat_rate)
+            unit_price, vat_rate, _, _ = get_effective_pricing(
+                db,
+                cust.id,
+                product.id,
+                target_date,
+                tenant_id=tenant_id,
+                customer=cust,
+                product=product,
+            )
+            excl, vat, incl = calculate_line_totals(override.quantity, unit_price, vat_rate)
             line = OrderLine(
                 tenant_id=tenant_id,
                 order_id=order.id,
                 product_id=product.id,
                 quantity=override.quantity,
                 unit_price=unit_price,
-                vat_rate=product.vat_rate,
+                vat_rate=vat_rate,
                 line_amount_excl_vat=excl,
                 line_vat=vat,
                 line_amount_incl_vat=incl,

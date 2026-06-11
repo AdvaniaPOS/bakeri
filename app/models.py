@@ -129,6 +129,12 @@ class VatClass(str, PyEnum):
     ZERO = "zero"                 # 0% (eksport, visse tjenester)
 
 
+class CustomerPriceTier(str, PyEnum):
+    """Hvilket SuSoft-prissett kunden skal bruke."""
+    PRICE_1 = "price_1"
+    PRICE_2 = "price_2"
+
+
 VAT_CLASS_RATES: dict[VatClass, Decimal] = {
     VatClass.FOOD_15: Decimal("15.00"),
     VatClass.STANDARD_25: Decimal("25.00"),
@@ -316,6 +322,17 @@ class Customer(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
         comment="Days in advance to generate orders (7-84 days = 1-12 weeks)"
     )
 
+    susoft_price_tier: Mapped[CustomerPriceTier] = mapped_column(
+        Enum(CustomerPriceTier, native_enum=False, length=20),
+        default=CustomerPriceTier.PRICE_1,
+        server_default=CustomerPriceTier.PRICE_1.value,
+        nullable=False,
+        comment=(
+            "Hvilket SuSoft-prissett kunden skal bruke. "
+            "price_1 = retailPrice/vatPercent, price_2 = alternativePrice/alternativeVatPercent."
+        ),
+    )
+
     # Helligdagslevering
     delivers_on_holidays: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False,
@@ -429,6 +446,14 @@ class Product(Base, TimestampMixin, SoftDeleteMixin, TenantMixin):
     vat_rate: Mapped[Decimal] = mapped_column(
         Numeric(5, 2), default=Decimal("15.00"), nullable=False,
         comment="VAT rate percentage (food typically 15% in Norway)"
+    )
+    alternative_price: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(10, 2), nullable=True,
+        comment="SuSoft pris 2 / alternativePrice (f.eks. takeaway-pris)"
+    )
+    alternative_vat_rate: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(5, 2), nullable=True,
+        comment="MVA-sats for SuSoft pris 2 / alternativeVatPercent"
     )
     vat_class: Mapped[VatClass] = mapped_column(
         Enum(VatClass), default=VatClass.FOOD_15, nullable=False,

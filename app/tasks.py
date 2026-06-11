@@ -216,7 +216,7 @@ def _generate_orders_sync(db, customer_id, template, from_date, to_date):
         Order, OrderLine, Product, OrderDateOverride, Customer,
         Holiday, CustomerBlockedDate, OrderStatus
     )
-    from .api.pricing import get_effective_price
+    from .api.pricing import get_effective_pricing
     from decimal import Decimal
 
     customer = db.get(Customer, customer_id)
@@ -297,12 +297,17 @@ def _generate_orders_sync(db, customer_id, template, from_date, to_date):
             if not product or not product.is_available_for_order:
                 continue
             
-            unit_price, _, _ = get_effective_price(
-                db, customer_id, item.product_id, current_date
+            unit_price, vat_rate, _, _ = get_effective_pricing(
+                db,
+                customer_id,
+                item.product_id,
+                current_date,
+                customer=db.get(Customer, customer_id),
+                product=product,
             )
             
             excl_vat = unit_price * item.quantity
-            vat = excl_vat * (product.vat_rate / 100)
+            vat = excl_vat * (vat_rate / 100)
             incl_vat = excl_vat + vat
             
             line = OrderLine(
@@ -310,7 +315,7 @@ def _generate_orders_sync(db, customer_id, template, from_date, to_date):
                 product_id=item.product_id,
                 quantity=item.quantity,
                 unit_price=unit_price,
-                vat_rate=product.vat_rate,
+                vat_rate=vat_rate,
                 line_amount_excl_vat=excl_vat,
                 line_vat=vat,
                 line_amount_incl_vat=incl_vat
@@ -649,7 +654,7 @@ def _propagate_price_sync(db, price_entry_id, customer_id, product_id, effective
     """Sync version of price propagation for Celery tasks."""
     from sqlalchemy import select
     from .models import CustomerProductPrice, OrderLine, Order
-    from .api.pricing import get_effective_price
+    from .api.pricing import get_effective_pricing
     from decimal import Decimal
     
     price_entry = db.get(CustomerProductPrice, price_entry_id)
@@ -672,14 +677,23 @@ def _propagate_price_sync(db, price_entry_id, customer_id, product_id, effective
     
     for line in affected_lines:
         order = db.get(Order, line.order_id)
-        new_price, _, _ = get_effective_price(
-            db, customer_id, product_id, order.delivery_date
+        product = db.get(Product, line.product_id)
+        if not order or not product:
+            continue
+        new_price, new_vat_rate, _, _ = get_effective_pricing(
+            db,
+            customer_id,
+            product_id,
+            order.delivery_date,
+            customer=db.get(Customer, customer_id),
+            product=product,
         )
         
-        if line.unit_price != new_price:
+        if line.unit_price != new_price or line.vat_rate != new_vat_rate:
             line.unit_price = new_price
+            line.vat_rate = new_vat_rate
             line.line_amount_excl_vat = new_price * line.quantity
-            line.line_vat = line.line_amount_excl_vat * (line.vat_rate / 100)
+            line.line_vat = line.line_amount_excl_vat * (new_vat_rate / 100)
             line.line_amount_incl_vat = line.line_amount_excl_vat + line.line_vat
             line.price_updated_at = to_naive_utc(now_utc())
             orders_to_update.add(order)

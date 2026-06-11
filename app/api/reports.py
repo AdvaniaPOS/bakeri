@@ -30,6 +30,28 @@ def _pdf_response(pdf_bytes: bytes, filename: str) -> Response:
     )
 
 
+def _render_pdf_response(template_name: str, context: dict, filename: str) -> Response:
+    try:
+        pdf = render_pdf(template_name, context)
+    except OSError as exc:
+        logger.exception("PDF-generering utilgjengelig for %s", filename)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "PDF-generering er ikke tilgjengelig på denne maskinen. "
+                "Backend mangler WeasyPrint-systembiblioteker "
+                "(for eksempel GTK/libgobject)."
+            ),
+        ) from exc
+    except Exception as exc:
+        logger.exception("PDF-generering feilet for %s", filename)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Klarte ikke generere PDF: {type(exc).__name__}: {exc}",
+        ) from exc
+    return _pdf_response(pdf, filename)
+
+
 def _status_label(status: OrderStatus) -> str:
     return {
         OrderStatus.DRAFT: "Utkast",
@@ -566,8 +588,11 @@ async def production_report_pdf(
         "total_products": data["total_products"],
         "products_by_category": data["products_by_category"],
     }
-    pdf = render_pdf("production_report.html", ctx)
-    return _pdf_response(pdf, f"produksjon-{target_date.isoformat()}.pdf")
+    return _render_pdf_response(
+        "production_report.html",
+        ctx,
+        f"produksjon-{target_date.isoformat()}.pdf",
+    )
 
 
 @router.get("/pdf/packing-list/{target_date}")
@@ -582,8 +607,11 @@ async def packing_list_pdf(
         "target_date": target_date,
         **data,
     }
-    pdf = render_pdf("packing_list.html", ctx)
-    return _pdf_response(pdf, f"pakkeliste-{target_date.isoformat()}.pdf")
+    return _render_pdf_response(
+        "packing_list.html",
+        ctx,
+        f"pakkeliste-{target_date.isoformat()}.pdf",
+    )
 
 
 @router.get("/pdf/order/{order_id}/confirmation")

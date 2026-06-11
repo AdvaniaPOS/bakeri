@@ -20,8 +20,8 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$HOME/bakeri}"
 SERVICE_NAME="${SERVICE_NAME:-bakeri-backend}"
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/health}"
-SMOKE_URL="${SMOKE_URL:-http://127.0.0.1:8000/api/v1/products?page_size=1}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8001/health}"
+SMOKE_URL="${SMOKE_URL:-http://127.0.0.1:8001/api/v1/products?page_size=1}"
 PYTHON_VENV="${PYTHON_VENV:-$REPO_DIR/.venv/bin/python}"
 PIP="${PIP:-$REPO_DIR/.venv/bin/pip}"
 

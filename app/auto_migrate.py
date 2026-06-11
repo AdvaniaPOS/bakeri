@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 #
 # Format: {(table_name, column_name): default_value}
 _BACKFILL_DEFAULTS: dict[tuple[str, str], Any] = {
+    ("customers", "susoft_price_tier"): "price_1",
     ("products", "batch_size"): 1,
     ("products", "production_lead_minutes"): 0,
     ("products", "production_days"): 0,

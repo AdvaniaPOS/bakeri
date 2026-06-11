@@ -27,14 +27,16 @@ import os
 import time
 from datetime import datetime, timedelta, date
 from decimal import Decimal
+from threading import Lock
 from typing import Optional, List, Dict, Any, Tuple
 import logging
 from urllib.parse import urlencode
+import uuid as uuid_module
 
 import httpx
 from tenacity import (
     retry, stop_after_attempt, wait_exponential, 
-    retry_if_exception_type, before_sleep_log
+    retry_if_exception, retry_if_exception_type, before_sleep_log
 )
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -45,6 +47,13 @@ from ..models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_SUSOFT_SYNC_REQUIRED_ROLES = {
+    "ROLE_SYSTEM",
+    "ROLE_SYSTEM_RO",
+    "ROLE_ADMIN",
+    "ROLE_MANAGER",
+}
 
 
 # Felter i SyncLog.request_payload som skal redigeres f\u00f8r persistering.
@@ -85,19 +94,51 @@ def _truncate_text(text, limit: int):
     return text[:limit] + "...[TRUNCATED]"
 
 
+def _normalize_match_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return "".join(ch for ch in str(value).casefold() if ch.isalnum())
+
+
+def _digits_only(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return "".join(ch for ch in str(value) if ch.isdigit())
+
+
+def _legacy_prefixed_alternative_id_for_order(order: Order) -> Optional[str]:
+    """Returner forrige tenant-prefikset altId-format for bakoverkompatibilitet."""
+    tenant_id = getattr(order, "tenant_id", None)
+    order_id = getattr(order, "id", None)
+    if tenant_id is None or order_id is None:
+        return None
+    return f"t{tenant_id}-o{order_id}"
+
+
 def _alternative_id_for_order(order: Order) -> str:
     """
     Bygg `alternativeId` for SuSoft-ordrer.
 
-    Bruker tenant-prefiks (f.eks. ``"t1-o42"``) slik at flere tenants som
-    deler samme SuSoft-konto ikke kolliderer p\u00e5 lokale ordre-IDer. For
-    bakoverkompatibilitet pr\u00f8ver `create_order` ogs\u00e5 \u00e5 matche legacy
-    ``str(order.id)`` ved idempotency-sjekk.
+    Bruker ordre-UUID i stedet for lokal integer-ID slik at DB-reset, import
+    eller ID-gjenbruk ikke kan koble nye lokale ordrer til gamle SuSoft-ordrer.
+    Tenant-prefiks beholdes for lesbarhet og ekstra navnerom.
     """
+    order_uuid = getattr(order, "order_uuid", None)
     tenant_id = getattr(order, "tenant_id", None)
-    if tenant_id is None:
-        return str(order.id)
-    return f"t{tenant_id}-o{order.id}"
+    if order_uuid:
+        if isinstance(order_uuid, uuid_module.UUID):
+            uuid_token = order_uuid.hex
+        else:
+            uuid_token = str(order_uuid).replace("-", "")
+        if tenant_id is None:
+            return f"ou{uuid_token}"
+        return f"t{tenant_id}-ou{uuid_token}"
+
+    # N\u00f8d-fallback for uventede gamle rader uten UUID.
+    legacy_alt_id = _legacy_prefixed_alternative_id_for_order(order)
+    if legacy_alt_id:
+        return legacy_alt_id
+    return str(order.id)
 
 
 def _format_allergens(raw) -> Optional[str]:
@@ -204,6 +245,9 @@ SUSOFT_SHOP_URL_KEY_ENV = os.getenv("SUSOFT_SHOP_URL_KEY", "")
 SUSOFT_TIMEOUT = int(os.getenv("SUSOFT_TIMEOUT", "30"))
 MAX_RETRY_ATTEMPTS = 3
 RETRY_INTERVAL_MINUTES = 60
+LOOKUP_CACHE_TTL_SECONDS = int(os.getenv("SUSOFT_LOOKUP_CACHE_TTL_SECONDS", "300"))
+LOOKUP_CACHE_MAX_ENTRIES = int(os.getenv("SUSOFT_LOOKUP_CACHE_MAX_ENTRIES", "2048"))
+ORDER_PUSH_REQUEST_PACING_SECONDS = float(os.getenv("SUSOFT_ORDER_PUSH_REQUEST_PACING_SECONDS", "0.75"))
 
 # Per-tenant JWT token cache: {tenant_id: (token, expires_at)}
 _token_cache: Dict[int, tuple] = {}
@@ -211,6 +255,88 @@ _token_cache: Dict[int, tuple] = {}
 # Per-tenant admin-API JWT token cache (separat fra hoved-API):
 # {tenant_id: (token, expires_at)}
 _admin_token_cache: Dict[int, tuple] = {}
+
+# Korte positive caches for oppslag brukt under ordre-push.
+_lookup_cache_lock = Lock()
+_customer_by_id_cache: Dict[Tuple[Optional[int], str], Tuple[float, Dict[str, Any]]] = {}
+_product_by_id_cache: Dict[Tuple[Optional[int], str], Tuple[float, Dict[str, Any]]] = {}
+_order_by_alt_id_cache: Dict[Tuple[Optional[int], str], Tuple[float, Dict[str, Any]]] = {}
+_order_push_state_lock = Lock()
+_order_push_locks: Dict[int, Lock] = {}
+_order_push_next_allowed_at: Dict[int, float] = {}
+
+
+def _lookup_cache_get(
+    cache: Dict[Tuple[Optional[int], str], Tuple[float, Dict[str, Any]]],
+    key: Tuple[Optional[int], str],
+) -> Optional[Dict[str, Any]]:
+    now = time.monotonic()
+    with _lookup_cache_lock:
+        entry = cache.get(key)
+        if entry is None:
+            return None
+        expires_at, payload = entry
+        if expires_at <= now:
+            cache.pop(key, None)
+            return None
+        return payload
+
+
+def _lookup_cache_set(
+    cache: Dict[Tuple[Optional[int], str], Tuple[float, Dict[str, Any]]],
+    key: Tuple[Optional[int], str],
+    payload: Dict[str, Any],
+) -> None:
+    expires_at = time.monotonic() + LOOKUP_CACHE_TTL_SECONDS
+    with _lookup_cache_lock:
+        cache[key] = (expires_at, payload)
+
+        expired_keys = [cache_key for cache_key, (expiry, _) in cache.items() if expiry <= time.monotonic()]
+        for expired_key in expired_keys:
+            cache.pop(expired_key, None)
+
+        while len(cache) > LOOKUP_CACHE_MAX_ENTRIES:
+            oldest_key = next(iter(cache))
+            cache.pop(oldest_key, None)
+
+
+def _tenant_request_key(tenant_id: Optional[int]) -> int:
+    return int(tenant_id or 0)
+
+
+def _get_order_push_lock(tenant_id: Optional[int]) -> Lock:
+    request_key = _tenant_request_key(tenant_id)
+    with _order_push_state_lock:
+        gate = _order_push_locks.get(request_key)
+        if gate is None:
+            gate = Lock()
+            _order_push_locks[request_key] = gate
+        return gate
+
+
+def _get_order_push_wait_seconds(tenant_id: Optional[int]) -> float:
+    request_key = _tenant_request_key(tenant_id)
+    now = time.monotonic()
+    with _order_push_state_lock:
+        next_allowed_at = _order_push_next_allowed_at.get(request_key, 0.0)
+    return max(0.0, next_allowed_at - now)
+
+
+def _schedule_next_order_push_slot(tenant_id: Optional[int]) -> None:
+    request_key = _tenant_request_key(tenant_id)
+    next_allowed_at = time.monotonic() + max(0.0, ORDER_PUSH_REQUEST_PACING_SECONDS)
+    with _order_push_state_lock:
+        _order_push_next_allowed_at[request_key] = next_allowed_at
+
+
+def _clear_lookup_caches() -> None:
+    with _lookup_cache_lock:
+        _customer_by_id_cache.clear()
+        _product_by_id_cache.clear()
+        _order_by_alt_id_cache.clear()
+    with _order_push_state_lock:
+        _order_push_locks.clear()
+        _order_push_next_allowed_at.clear()
 
 # Default-base for SuSoft admin-API ("API 2") - api.susoft.com uten port.
 SUSOFT_ADMIN_BASE_URL_DEFAULT = os.getenv(
@@ -225,6 +351,17 @@ class SuSoftAPIError(Exception):
         self.status_code = status_code
         self.response_body = response_body
         super().__init__(self.message)
+
+
+def _is_retryable_susoft_exception(exc: BaseException) -> bool:
+    """Retry only transient transport/server-side SuSoft failures."""
+    if isinstance(exc, httpx.HTTPError):
+        return True
+    if isinstance(exc, SuSoftAPIError):
+        if exc.status_code is None:
+            return True
+        return exc.status_code == 429 or exc.status_code >= 500
+    return False
 
 
 class SuSoftService:
@@ -246,6 +383,7 @@ class SuSoftService:
     def __init__(self, db: Session, tenant_id: Optional[int] = None):
         self.db = db
         self.tenant_id = tenant_id or self._resolve_default_tenant_id()
+        self._pending_order_alt_id_misses_before_post: set[str] = set()
         self._token: Optional[str] = None
         self._token_expires: Optional[datetime] = None
         # Last credentials/config snapshot from tenant (lazy loaded)
@@ -368,6 +506,69 @@ class SuSoftService:
             delay = min(delay * 2, 30.0)
         return response
 
+    def _request_with_order_push_pacing(
+        self,
+        method: str,
+        path: str,
+        **kwargs,
+    ) -> httpx.Response:
+        gate = _get_order_push_lock(self.tenant_id)
+        with gate:
+            wait = _get_order_push_wait_seconds(self.tenant_id)
+            if wait > 0:
+                logger.debug(
+                    "Pacing SuSoft order push request %s %s by %.2fs for tenant %s",
+                    method,
+                    path,
+                    wait,
+                    self.tenant_id,
+                )
+                time.sleep(wait)
+            try:
+                return self._request_with_throttle_retry(method, path, **kwargs)
+            finally:
+                _schedule_next_order_push_slot(self.tenant_id)
+
+    def _fetch_order_by_alt_id(
+        self,
+        alt_id: str,
+        *,
+        memoize_pre_post_miss: bool = False,
+    ) -> Tuple[Optional[Dict[str, Any]], bool]:
+        alt_key = str(alt_id)
+        cache_key = (self.tenant_id, alt_key)
+        cached_order = _lookup_cache_get(_order_by_alt_id_cache, cache_key)
+        if cached_order is not None:
+            return cached_order, False
+
+        if memoize_pre_post_miss and alt_key in self._pending_order_alt_id_misses_before_post:
+            return None, True
+
+        endpoint = f"/order/altid?altId={alt_key}"
+
+        try:
+            response = self._request_with_order_push_pacing(
+                "GET",
+                endpoint,
+                headers=self._get_headers(),
+            )
+
+            if response.status_code == 200:
+                payload = response.json()
+                _lookup_cache_set(_order_by_alt_id_cache, cache_key, payload)
+                return payload, False
+            if response.status_code == 404:
+                if memoize_pre_post_miss:
+                    self._pending_order_alt_id_misses_before_post.add(alt_key)
+                return None, True
+
+            logger.warning("Error fetching order %s: %s", alt_key, response.status_code)
+            return None, False
+
+        except Exception as e:
+            logger.error(f"Error fetching order by altId: {e}")
+            return None, False
+
     def _fetch_paginated_get(
         self,
         endpoint: str,
@@ -390,6 +591,12 @@ class SuSoftService:
             )
 
             if not response.is_success:
+                if response.status_code in {401, 403}:
+                    raise SuSoftAPIError(
+                        self._sync_access_error_message(endpoint, response.status_code),
+                        response.status_code,
+                        response.text,
+                    )
                 raise SuSoftAPIError(
                     f"Failed to fetch {endpoint}: {response.status_code}",
                     response.status_code,
@@ -434,6 +641,12 @@ class SuSoftService:
                     headers=self._get_headers(),
                 )
                 if not response.is_success:
+                    if response.status_code in {401, 403}:
+                        raise SuSoftAPIError(
+                            self._sync_access_error_message("/product/search", response.status_code),
+                            response.status_code,
+                            response.text,
+                        )
                     raise SuSoftAPIError(
                         f"Failed to fetch /product/search ({flag}): {response.status_code}",
                         response.status_code,
@@ -542,6 +755,276 @@ class SuSoftService:
         company_name = display_name if is_company and display_name else (last_name if is_company else None)
         contact_person = first_name or None
         return name[:255], company_name[:255] if company_name else None, contact_person[:255] if contact_person else None
+
+    def _customer_primary_name(self, customer: Customer) -> str:
+        return (customer.company_name or customer.name or customer.contact_person or "").strip()
+
+    def _remote_customer_email(self, cust_data: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(cust_data, dict):
+            return ""
+        address = cust_data.get("address") or {}
+        invoice_address = cust_data.get("invoiceAddress") or {}
+        delivery_address = cust_data.get("deliveryAddress") or {}
+        return (
+            (address.get("email") or "")
+            or (invoice_address.get("email") or "")
+            or (delivery_address.get("email") or "")
+            or (cust_data.get("remindersEmail") or "")
+        ).strip()
+
+    def _remote_customer_phone(self, cust_data: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(cust_data, dict):
+            return ""
+        for address in (
+            cust_data.get("address") or {},
+            cust_data.get("invoiceAddress") or {},
+            cust_data.get("deliveryAddress") or {},
+        ):
+            phone = (address.get("mobilePhone") or address.get("landLinePhone") or "").strip()
+            if phone:
+                return phone
+        return ""
+
+    def _score_customer_payload_similarity(
+        self,
+        canonical: Dict[str, Any],
+        candidate: Dict[str, Any],
+    ) -> int:
+        score = 0
+
+        canonical_name, _, _ = self._build_customer_name(canonical)
+        candidate_name, _, _ = self._build_customer_name(candidate)
+        if _normalize_match_text(canonical_name) == _normalize_match_text(candidate_name):
+            score += 200
+
+        if str(canonical.get("externalCustomerId") or "") == str(candidate.get("externalCustomerId") or ""):
+            score += 80
+
+        canonical_email = _normalize_match_text(self._remote_customer_email(canonical))
+        candidate_email = _normalize_match_text(self._remote_customer_email(candidate))
+        if canonical_email and canonical_email == candidate_email:
+            score += 50
+
+        canonical_phone = _digits_only(self._remote_customer_phone(canonical))
+        candidate_phone = _digits_only(self._remote_customer_phone(candidate))
+        if canonical_phone and canonical_phone == candidate_phone:
+            score += 30
+
+        return score
+
+    def _canonicalize_susoft_customer_rows(
+        self,
+        customers_data: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        ordered_ids: List[str] = []
+        for row in customers_data:
+            raw_id = row.get("id")
+            if raw_id is None or raw_id == "":
+                continue
+            susoft_id = str(raw_id)
+            if susoft_id not in grouped:
+                grouped[susoft_id] = []
+                ordered_ids.append(susoft_id)
+            grouped[susoft_id].append(row)
+
+        canonical_rows: List[Dict[str, Any]] = []
+        for susoft_id in ordered_ids:
+            variants = grouped[susoft_id]
+            if len(variants) == 1:
+                canonical_rows.append(variants[0])
+                continue
+
+            canonical = self.get_customer_by_id(susoft_id)
+            if canonical is None:
+                logger.warning(
+                    "Skipping SuSoft customer id %s from /customer/list because /customer/id cannot load it and %d conflicting rows were returned",
+                    susoft_id,
+                    len(variants),
+                )
+                continue
+
+            best_variant = max(
+                variants,
+                key=lambda variant: self._score_customer_payload_similarity(canonical, variant),
+            )
+            canonical_rows.append(best_variant)
+
+        return canonical_rows
+
+    def _score_local_customer_candidate(
+        self,
+        target_customer: Customer,
+        candidate_customer: Customer,
+        remote_customer: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        score = 0
+
+        target_name = _normalize_match_text(self._customer_primary_name(target_customer))
+        candidate_name = _normalize_match_text(self._customer_primary_name(candidate_customer))
+        remote_name = ""
+        if isinstance(remote_customer, dict):
+            remote_name = _normalize_match_text(
+                remote_customer.get("displayName")
+                or " ".join(
+                    part for part in [remote_customer.get("firstName"), remote_customer.get("lastName")] if part
+                )
+            )
+        if target_name and (candidate_name == target_name or remote_name == target_name):
+            score += 200
+        elif target_name and candidate_name and candidate_name != target_name:
+            score -= 40
+
+        target_email = _normalize_match_text(target_customer.email)
+        candidate_email_source = candidate_customer.email
+        if isinstance(remote_customer, dict):
+            candidate_email_source = candidate_email_source or self._remote_customer_email(remote_customer)
+        candidate_email = _normalize_match_text(candidate_email_source)
+        if target_email:
+            if candidate_email == target_email:
+                score += 80
+            elif candidate_email:
+                score -= 120
+
+        target_phone = _digits_only(target_customer.phone)
+        candidate_phone_source = candidate_customer.phone
+        if isinstance(remote_customer, dict):
+            candidate_phone_source = candidate_phone_source or self._remote_customer_phone(remote_customer)
+        candidate_phone = _digits_only(candidate_phone_source)
+        if target_phone:
+            if candidate_phone == target_phone:
+                score += 30
+            elif candidate_phone:
+                score -= 20
+
+        if target_customer.postal_code and candidate_customer.postal_code:
+            if str(target_customer.postal_code).strip() == str(candidate_customer.postal_code).strip():
+                score += 15
+            else:
+                score -= 10
+        if target_customer.city and candidate_customer.city:
+            if _normalize_match_text(target_customer.city) == _normalize_match_text(candidate_customer.city):
+                score += 10
+            else:
+                score -= 10
+
+        return score
+
+    def _find_replacement_susoft_customer(
+        self,
+        target_customer: Customer,
+    ) -> Optional[Tuple[Customer, Dict[str, Any], int]]:
+        if target_customer.id is None:
+            return None
+
+        candidates = self.db.execute(
+            select(Customer).where(
+                Customer.tenant_id == target_customer.tenant_id,
+                Customer.id != target_customer.id,
+                Customer.is_active == True,
+                Customer.susoft_customer_id.is_not(None),
+                Customer.susoft_customer_id != "",
+            )
+        ).scalars().all()
+
+        locally_scored_candidates: List[Tuple[int, Customer]] = []
+        for candidate in candidates:
+            local_score = self._score_local_customer_candidate(target_customer, candidate)
+            if local_score <= 0:
+                continue
+            locally_scored_candidates.append((local_score, candidate))
+
+        if not locally_scored_candidates:
+            return None
+
+        locally_scored_candidates.sort(key=lambda item: (-item[0], item[1].id or 0))
+
+        scored_candidates: List[Tuple[int, Customer, Dict[str, Any]]] = []
+        for index, (local_score, candidate) in enumerate(locally_scored_candidates[:5]):
+            try:
+                remote_customer = self.get_customer_by_id(str(candidate.susoft_customer_id))
+            except SuSoftAPIError as exc:
+                logger.warning(
+                    "Could not validate replacement SuSoft customer %s for local customer %s: %s",
+                    candidate.susoft_customer_id,
+                    target_customer.id,
+                    exc,
+                )
+                continue
+            if remote_customer is None:
+                continue
+
+            score = self._score_local_customer_candidate(target_customer, candidate, remote_customer)
+            if score <= 0:
+                continue
+
+            next_local_score = (
+                locally_scored_candidates[index + 1][0]
+                if index + 1 < len(locally_scored_candidates)
+                else None
+            )
+            if score >= 180 and (next_local_score is None or local_score - next_local_score >= 30):
+                return candidate, remote_customer, score
+
+            scored_candidates.append((score, candidate, remote_customer))
+
+        if not scored_candidates:
+            return None
+
+        scored_candidates.sort(key=lambda item: (-item[0], item[1].id or 0))
+        best_score, best_customer, best_remote = scored_candidates[0]
+        second_score = scored_candidates[1][0] if len(scored_candidates) > 1 else None
+        if best_score < 100:
+            return None
+        if second_score is not None and best_score - second_score < 30:
+            logger.warning(
+                "Ambiguous replacement candidates for local customer %s: best=%s (%s) second_score=%s",
+                target_customer.id,
+                best_customer.id,
+                best_customer.susoft_customer_id,
+                second_score,
+            )
+            return None
+        return best_customer, best_remote, best_score
+
+    def _resolve_invoice_customer(self, target_customer: Customer) -> Tuple[str, Dict[str, Any]]:
+        invoice_susoft_id = target_customer.susoft_customer_id
+        if not invoice_susoft_id and target_customer.parent_customer_id:
+            from sqlalchemy.orm import object_session
+            session = object_session(target_customer)
+            if session is not None:
+                parent = session.get(Customer, target_customer.parent_customer_id)
+                if parent and parent.susoft_customer_id:
+                    invoice_susoft_id = parent.susoft_customer_id
+                    logger.info(
+                        "Customer %s mangler SuSoft-ID, bruker hovedkundens (%s)",
+                        target_customer.id,
+                        invoice_susoft_id,
+                    )
+        if not invoice_susoft_id:
+            raise SuSoftAPIError("Customer has no SuSoft ID")
+
+        customer_data = self.get_customer_by_id(str(invoice_susoft_id))
+        if customer_data is not None:
+            return str(invoice_susoft_id), customer_data
+
+        replacement = self._find_replacement_susoft_customer(target_customer)
+        if replacement is None:
+            raise SuSoftAPIError(
+                f"SuSoft-kunde {invoice_susoft_id} kan ikke lastes via /customer/id og kan ikke brukes for ordre/fakturering.",
+                404,
+            )
+
+        matched_customer, matched_remote, matched_score = replacement
+        logger.warning(
+            "Repairing invalid SuSoft customer mapping for local customer %s: %s -> %s (matched local customer %s, score=%s)",
+            target_customer.id,
+            invoice_susoft_id,
+            matched_customer.susoft_customer_id,
+            matched_customer.id,
+            matched_score,
+        )
+        return str(matched_customer.susoft_customer_id), matched_remote
     
     def _load_config(self, force: bool = False) -> None:
         """
@@ -618,6 +1101,36 @@ class SuSoftService:
                 response = self.client.request(method, path, headers=headers, **kwargs)
         return response
 
+    def _get_current_user_profile(self) -> Optional[Dict[str, Any]]:
+        """Hent aktiv SuSoft-brukerprofil for bedre feilmeldinger ved manglende tilgang."""
+        response = self._request_with_auth_retry("GET", "/user/me")
+        if not response.is_success:
+            logger.warning(
+                "Kunne ikke hente SuSoft /user/me (tenant=%s): HTTP %s %s",
+                self.tenant_id,
+                response.status_code,
+                response.text[:300],
+            )
+            return None
+        body = response.json() or {}
+        return body if isinstance(body, dict) else None
+
+    def _get_current_user_roles(self) -> List[str]:
+        profile = self._get_current_user_profile() or {}
+        roles = profile.get("authorities") or []
+        if not isinstance(roles, list):
+            return []
+        return [str(role).strip() for role in roles if str(role).strip()]
+
+    def _sync_access_error_message(self, endpoint: str, status_code: int) -> str:
+        roles = self._get_current_user_roles()
+        roles_text = ", ".join(roles) if roles else "ukjent"
+        required = ", ".join(sorted(_SUSOFT_SYNC_REQUIRED_ROLES))
+        return (
+            f"SuSoft-brukeren mangler tilgang til {endpoint} (HTTP {status_code}). "
+            f"Roller: {roles_text}. Krever en av: {required}."
+        )
+
     def _invalidate_token(self) -> None:
         if self.tenant_id is not None:
             _token_cache.pop(self.tenant_id, None)
@@ -626,15 +1139,36 @@ class SuSoftService:
 
     def test_connection(self) -> bool:
         """
-        Test connection to SuSoft API. Returnerer True hvis vi kan autentisere.
-        Oppdaterer tenant.susoft_connection_status.
+        Test connection to SuSoft API.
+
+        Returnerer bare True hvis vi kan autentisere OG lese et lett kunde-endepunkt,
+        slik at UI-et ikke gir falsk grønt lys for credentials som mangler sync-tilgang.
         """
         self._load_config(force=True)
         self._invalidate_token()
         token = self._get_auth_token(force=True)
         ok = bool(token)
+        error: Optional[str] = None
+
+        if ok:
+            response = self._request_with_auth_retry(
+                "GET",
+                "/customer/list?page=0&pageSize=1",
+            )
+            if response.status_code in {401, 403}:
+                ok = False
+                error = self._sync_access_error_message("/customer/list", response.status_code)
+            elif not response.is_success:
+                ok = False
+                error = (
+                    f"SuSoft svarte HTTP {response.status_code} ved test av /customer/list: "
+                    f"{response.text[:300]}"
+                )
         try:
-            self._update_tenant_status("ok" if ok else "failed", None if ok else "Autentisering feilet")
+            self._update_tenant_status(
+                "ok" if ok else "failed",
+                None if ok else (error or "Autentisering feilet"),
+            )
         except Exception:
             pass
         return ok
@@ -1425,7 +1959,7 @@ class SuSoftService:
     @retry(
         stop=stop_after_attempt(MAX_RETRY_ATTEMPTS),
         wait=wait_exponential(multiplier=1, min=4, max=60),
-        retry=retry_if_exception_type((httpx.HTTPError, SuSoftAPIError)),
+        retry=retry_if_exception(_is_retryable_susoft_exception),
         before_sleep=before_sleep_log(logger, logging.WARNING)
     )
     def create_order(self, order: Order) -> str:
@@ -1444,35 +1978,22 @@ class SuSoftService:
         
         Returns the susoft_order_id (orderNo) if successful.
         """
-        # Bestem hvilken SuSoft-kunde fakturaen skal g\u00e5 til.
-        # Utsalg uten egen susoft_customer_id arver hovedkundens, slik at
-        # alle leveranser i en kjede faktureres p\u00e5 samme SuSoft-kunde.
-        invoice_susoft_id = order.customer.susoft_customer_id
-        if not invoice_susoft_id and order.customer.parent_customer_id:
-            from sqlalchemy.orm import object_session
-            session = object_session(order)
-            if session is not None:
-                parent = session.get(Customer, order.customer.parent_customer_id)
-                if parent and parent.susoft_customer_id:
-                    invoice_susoft_id = parent.susoft_customer_id
-                    logger.info(
-                        "Order %s: utsalg %s mangler SuSoft-ID, bruker hovedkundens (%s)",
-                        order.id, order.customer.id, invoice_susoft_id,
-                    )
-        if not invoice_susoft_id:
-            raise SuSoftAPIError("Customer has no SuSoft ID")
+        invoice_susoft_id, customer_data = self._resolve_invoice_customer(order.customer)
 
         # IDEMPOTENS: Sjekk om SuSoft allerede har denne ordren
         # (kan skje ved retry hvis forrige POST kom frem men svaret gikk tapt).
-        # Vi prøver å matche på ny tenant-prefikset altId først, og fallback
-        # til legacy str(order.id) for å fange ordrer opprettet før prefiksen
-        # ble inført.
+        # Vi matcher på UUID-basert altId først og tillater kun forrige
+        # tenant-prefikset format som bakoverkompatibilitet. Rå integer-ID er
+        # beviselig utrygg ved DB-reset/kloning og brukes ikke lenger.
         alt_id = _alternative_id_for_order(order)
-        legacy_alt_id = str(order.id)
+        legacy_alt_id = _legacy_prefixed_alternative_id_for_order(order)
         try:
-            existing = self.get_order_by_alt_id(alt_id) or (
-                self.get_order_by_alt_id(legacy_alt_id) if legacy_alt_id != alt_id else None
-            )
+            existing, _ = self._fetch_order_by_alt_id(alt_id, memoize_pre_post_miss=True)
+            if not existing and legacy_alt_id and legacy_alt_id != alt_id:
+                existing, _ = self._fetch_order_by_alt_id(
+                    legacy_alt_id,
+                    memoize_pre_post_miss=True,
+                )
             if existing:
                 existing_id = str(
                     existing.get("orderNo")
@@ -1500,6 +2021,23 @@ class SuSoftService:
             # Hvis idempotens-sjekken feiler, logger vi og fortsetter med POST.
             # Bedre å risikere duplikat (alarm) enn å stoppe sync helt.
             logger.warning("Idempotency check failed for order %s: %s", order.id, e)
+
+        missing_product_ids = []
+        validated_product_ids = set()
+        for line in order.lines:
+            product_id = getattr(line.product, "susoft_product_id", None)
+            if not product_id or product_id in validated_product_ids:
+                continue
+            validated_product_ids.add(product_id)
+            if self.get_product_by_id(product_id) is None:
+                missing_product_ids.append(product_id)
+
+        if missing_product_ids:
+            missing_text = ", ".join(sorted(missing_product_ids))
+            raise SuSoftAPIError(
+                f"SuSoft-produkt mangler eller kan ikke lastes via /product/id: {missing_text}",
+                404,
+            )
 
         # Build order payload according to SuSoft Swagger spec
         # See /order POST endpoint definition
@@ -1579,10 +2117,15 @@ class SuSoftService:
         )
         
         try:
-            response = self.client.post(
-                endpoint, 
+            self._pending_order_alt_id_misses_before_post.discard(alt_id)
+            if legacy_alt_id:
+                self._pending_order_alt_id_misses_before_post.discard(legacy_alt_id)
+
+            response = self._request_with_order_push_pacing(
+                "POST",
+                endpoint,
                 json=payload,
-                headers=self._get_headers()
+                headers=self._get_headers(),
             )
             
             # Log the attempt
@@ -1600,12 +2143,15 @@ class SuSoftService:
             
             if response.status_code in (200, 201):
                 data = response.json()
+                if isinstance(data, dict):
+                    _lookup_cache_set(_order_by_alt_id_cache, (self.tenant_id, alt_id), data)
                 # SuSoft returns Order object with orderNo
                 return str(data.get("orderNo") or data.get("uuid") or data.get("alternativeId"))
             elif response.status_code == 404:
-                # 404 typically means customer or product not found/allowed in SuSoft
+                # Kunde og produkter er allerede preflight-sjekket over, så en 404 her
+                # peker mer sannsynlig på kundeoppsett eller annen payload-kontrakt.
                 raise SuSoftAPIError(
-                    f"Kunde eller produkt ikke funnet i SuSoft (kunde: {order.customer.susoft_customer_id})",
+                    f"SuSoft avviste ordreoppretting med 404 for kunde {invoice_susoft_id} selv om kunde og produkter kunne lastes.",
                     response.status_code,
                     response.text
                 )
@@ -1814,22 +2360,8 @@ class SuSoftService:
         Retrieve order from SuSoft by alternativeId.
         Uses GET /order/altid?altId=
         """
-        endpoint = f"/order/altid?altId={alt_id}"
-        
-        try:
-            response = self.client.get(endpoint, headers=self._get_headers())
-            
-            if response.status_code == 200:
-                return response.json()
-            elif response.status_code == 404:
-                return None
-            else:
-                logger.warning(f"Error fetching order {alt_id}: {response.status_code}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error fetching order by altId: {e}")
-            return None
+        order_data, _ = self._fetch_order_by_alt_id(alt_id)
+        return order_data
     
     def get_order_by_uuid(self, uuid: str) -> Optional[Dict[str, Any]]:
         """
@@ -2192,6 +2724,8 @@ class SuSoftService:
             else:
                 customers_data = self._fetch_paginated_get("/customer/list")
 
+            customers_data = self._canonicalize_susoft_customer_rows(customers_data)
+
             results["fetched"] = len(customers_data)
             seen_ids: set[str] = set()
 
@@ -2280,10 +2814,12 @@ class SuSoftService:
         - externalRefId -> sku
         - name
         - description
-        - retailPrice -> default_price
+        - retailPrice -> default_price (pris 1)
+        - alternativePrice -> alternative_price (pris 2)
         - category1 -> category
         - barcode
-        - vatPercent
+        - vatPercent -> vat_rate (pris 1)
+        - alternativeVatPercent -> alternative_vat_rate (pris 2)
         """
         self._ensure_tenant_available()
         results = {"created": 0, "updated": 0, "errors": 0, "fetched": 0}
@@ -2330,6 +2866,11 @@ class SuSoftService:
                     return leaf[:100] if leaf else None
                 return None
 
+            def to_decimal_or_none(value: Any) -> Optional[Decimal]:
+                if value is None or value == "":
+                    return None
+                return Decimal(str(value))
+
             for prod_data in products_data:
                 try:
                     susoft_id = prod_data.get("id")
@@ -2352,8 +2893,10 @@ class SuSoftService:
                         existing.name = (prod_data.get("name") or existing.name or "Unknown")[:255]
                         existing.description = prod_data.get("description")
                         existing.default_price = Decimal(str(prod_data.get("retailPrice", 0)))
+                        existing.alternative_price = to_decimal_or_none(prod_data.get("alternativePrice"))
                         existing.category = resolve_category(prod_data)
                         existing.vat_rate = Decimal(str(prod_data.get("vatPercent", existing.vat_rate or 15)))
+                        existing.alternative_vat_rate = to_decimal_or_none(prod_data.get("alternativeVatPercent"))
                         existing.unit = (prod_data.get("unit") or existing.unit or "stk")[:20]
                         # Aktiv-flagg fra Susoft:
                         #  - Hvis Susoft sier active=false  -> alltid skjul (Susoft er fasit
@@ -2381,9 +2924,11 @@ class SuSoftService:
                             name=(prod_data.get("name") or "Unknown")[:255],
                             description=prod_data.get("description"),
                             default_price=Decimal(str(prod_data.get("retailPrice", 0))),
+                            alternative_price=to_decimal_or_none(prod_data.get("alternativePrice")),
                             category=category_value,
                             unit=(prod_data.get("unit") or "stk")[:20],
                             vat_rate=Decimal(str(prod_data.get("vatPercent", 15))),
+                            alternative_vat_rate=to_decimal_or_none(prod_data.get("alternativeVatPercent")),
                             is_active=prod_data.get("active", True),
                             allergens=_format_allergens(prod_data.get("allergens")),
                             susoft_last_synced_at=datetime.utcnow()
@@ -2430,24 +2975,82 @@ class SuSoftService:
         except Exception as e:
             logger.error(f"Error fetching customer by external ID: {e}")
             return None
+
+    def get_customer_by_id(self, customer_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Load customer from SuSoft by ID.
+        Uses GET /customer/id?id=
+        """
+        customer_key = str(customer_id)
+        cache_key = (self.tenant_id, customer_key)
+        cached_customer = _lookup_cache_get(_customer_by_id_cache, cache_key)
+        if cached_customer is not None:
+            return cached_customer
+
+        endpoint = f"/customer/id?id={customer_key}"
+
+        try:
+            response = self._request_with_order_push_pacing(
+                "GET",
+                endpoint,
+                headers=self._get_headers(),
+            )
+
+            if response.status_code == 200:
+                payload = response.json()
+                _lookup_cache_set(_customer_by_id_cache, cache_key, payload)
+                return payload
+            if response.status_code == 404:
+                return None
+            raise SuSoftAPIError(
+                f"Failed to fetch SuSoft customer {customer_key}: {response.status_code}",
+                response.status_code,
+                response.text,
+            )
+
+        except SuSoftAPIError:
+            raise
+        except Exception as e:
+            logger.error(f"Error fetching customer by ID: {e}")
+            raise
     
     def get_product_by_id(self, product_id: str) -> Optional[Dict[str, Any]]:
         """
         Load product from SuSoft by ID.
         Uses GET /product/id?productId=
         """
-        endpoint = f"/product/id?productId={product_id}"
+        product_key = str(product_id)
+        cache_key = (self.tenant_id, product_key)
+        cached_product = _lookup_cache_get(_product_by_id_cache, cache_key)
+        if cached_product is not None:
+            return cached_product
+
+        endpoint = f"/product/id?productId={product_key}"
         
         try:
-            response = self.client.get(endpoint, headers=self._get_headers())
+            response = self._request_with_order_push_pacing(
+                "GET",
+                endpoint,
+                headers=self._get_headers(),
+            )
             
             if response.status_code == 200:
-                return response.json()
-            return None
+                payload = response.json()
+                _lookup_cache_set(_product_by_id_cache, cache_key, payload)
+                return payload
+            if response.status_code == 404:
+                return None
+            raise SuSoftAPIError(
+                f"Failed to fetch SuSoft product {product_key}: {response.status_code}",
+                response.status_code,
+                response.text,
+            )
             
+        except SuSoftAPIError:
+            raise
         except Exception as e:
             logger.error(f"Error fetching product: {e}")
-            return None
+            raise
     
     def health_check(self) -> bool:
         """
